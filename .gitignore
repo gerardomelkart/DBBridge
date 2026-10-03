@@ -1,0 +1,8 @@
+**/bin/
+**/obj/
+.vs/
+**/logs/
+**/Credentials.Local.cs
+publish/
+*.user
+*.suo
