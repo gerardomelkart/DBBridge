@@ -1,22 +1,30 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Text;
 
 namespace DBBridge.Infrastructure;
 
 internal sealed class RunLog : IDisposable
 {
-    private readonly StreamWriter writer;
+    private readonly string processName;
+    private readonly string directory;
     private readonly Stopwatch timer = Stopwatch.StartNew();
     private readonly object gate = new();
+    private readonly Func<DateTimeOffset> clock;
+    private StreamWriter? writer;
+    private string? currentPath;
     private bool disposed;
+    private readonly string runId = $"{Environment.ProcessId}-{Guid.NewGuid():N}";
 
-    public RunLog(string process, string period)
+    public RunLog(string process, string period) : this(process, period, () => DateTimeOffset.Now) { }
+
+    internal RunLog(string process, string period, Func<DateTimeOffset> clock)
     {
-        string directory = Path.Combine(AppContext.BaseDirectory, "logs");
+        processName = process;
+        this.clock = clock;
+        directory = Path.Combine(AppContext.BaseDirectory, "logs");
         Directory.CreateDirectory(directory);
-        string path = Path.Combine(directory, $"{process}_{period}_{DateTime.Now:yyyyMMdd_HHmmss}_{Environment.ProcessId}.log");
-        writer = new StreamWriter(path, append: false) { AutoFlush = true };
-        Write($"Log: {path}");
+        Write($"INICIO DE EJECUCIÓN; periodo={period}; archivo diario acumulativo.");
     }
 
     public void Write(string message)
@@ -24,9 +32,20 @@ internal sealed class RunLog : IDisposable
         lock (gate)
         {
             if (disposed) return;
+            DateTimeOffset now = clock();
+            string path = Path.Combine(directory, $"{processName}_{now:yyyyMMdd}.log");
+            if (path != currentPath)
+            {
+                writer?.Dispose();
+                writer = null;
+                var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
+                writer = new StreamWriter(stream, new UTF8Encoding(false)) { AutoFlush = true };
+                currentPath = path;
+                Console.WriteLine($"Log diario: {path}");
+            }
             string seconds = timer.Elapsed.TotalSeconds.ToString("F1", CultureInfo.InvariantCulture);
-            string line = $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz} [+{seconds}s] {message}";
-            writer.WriteLine(line);
+            string line = $"{now:yyyy-MM-dd HH:mm:ss zzz} [ejecución={runId}] [+{seconds}s] {message}";
+            writer!.WriteLine(line);
             Console.WriteLine(line);
         }
     }
@@ -46,7 +65,7 @@ internal sealed class RunLog : IDisposable
         lock (gate)
         {
             disposed = true;
-            writer.Dispose();
+            writer?.Dispose();
         }
     }
 }

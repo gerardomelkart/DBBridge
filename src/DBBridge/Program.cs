@@ -33,32 +33,30 @@ internal static class Program
                 return 2;
             }
             log = new RunLog(process.Name, period);
-            log.Write($"INICIO {process.Name}; periodo={period}; versión=1.0");
+            log.Write($"INICIO {process.Name}; periodo={period}; versión=1.2");
             process.Execute(period, log, cancellation.Token);
             log.Write("EXITO: carga finalizada y conteo validado.");
             return 0;
         }
         catch (OperationCanceledException)
         {
-            log?.Write("CANCELADO: la tabla puede estar incompleta. Reejecutar para reconstruirla.");
+            log?.Write("CANCELADO: consulta la etapa y el estado del destino en este log.");
             return 3;
         }
         catch (OracleException) when (cancellation.IsCancellationRequested)
         {
-            log?.Write("CANCELADO: la tabla puede estar incompleta. Reejecutar para reconstruirla.");
+            log?.Write("CANCELADO: consulta la etapa y el estado del destino en este log.");
             return 3;
         }
         catch (OracleException error)
         {
             log?.Write($"FALLO ORACLE {error.Number}: {error.Message}");
-            log?.Write("La tabla puede estar incompleta si ya comenzó la carga. Reejecutar.");
             Console.Error.WriteLine($"Error Oracle {error.Number}. Consulta el log.");
             return 1;
         }
         catch (Exception error)
         {
             log?.Write($"FALLO {error.GetType().Name}: {error.Message}");
-            log?.Write("Si comenzó la carga, la tabla puede estar incompleta. Reejecutar.");
             Console.Error.WriteLine(error.Message);
             return 1;
         }

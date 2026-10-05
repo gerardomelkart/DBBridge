@@ -13,6 +13,52 @@ internal sealed class RnipProcess : ITransferProcess
 
     public void Execute(string period, RunLog log, CancellationToken cancellation)
     {
+        var state = new ExecutionState();
+        try
+        {
+            ExecuteCore(period, log, cancellation, state);
+        }
+        catch (Exception error)
+        {
+            string detail = DescribeFailure(error, cancellation);
+            log.Write($"FALLO EN {state.Stage}: {detail}");
+            log.Write(state.DestinationTouched
+                ? "La recreación del destino comenzó; la tabla puede estar vacía o incompleta. Reejecutar."
+                : "DESTINO SIN MODIFICAR: no comenzó la recreación ni la inserción.");
+            throw;
+        }
+    }
+
+    private static string DescribeFailure(Exception error, CancellationToken cancellation)
+    {
+        if (cancellation.IsCancellationRequested) return "Ejecución cancelada por el usuario.";
+        if (error is not OracleException oracle) return $"{error.GetType().Name}: {error.Message}";
+
+        string meaning = oracle.Number switch
+        {
+            1033 => "Oracle informa que la base está iniciando o apagándose y no acepta la conexión. " +
+                "Espera unos minutos; si persiste, reporta al administrador de esa base.",
+            1017 => "Oracle rechazó el usuario o la contraseña.",
+            28000 => "La cuenta de Oracle está bloqueada; requiere revisión del administrador.",
+            28001 => "La contraseña de Oracle está vencida.",
+            12514 => "El listener no reconoce el SERVICE_NAME solicitado.",
+            12505 => "El listener no reconoce el SID solicitado.",
+            12541 => "No se encontró un listener disponible en el destino de conexión.",
+            12170 => "La conexión a Oracle agotó el tiempo de espera.",
+            _ => "Oracle devolvió el error siguiente."
+        };
+        string original = oracle.Message.Replace("\r", " ").Replace("\n", " ");
+        return $"ORA-{oracle.Number:D5}. {meaning} Detalle original: {original}";
+    }
+
+    private sealed class ExecutionState
+    {
+        public string Stage { get; set; } = "Preparando conexiones";
+        public bool DestinationTouched { get; set; }
+    }
+
+    private void ExecuteCore(string period, RunLog log, CancellationToken cancellation, ExecutionState state)
+    {
         string table = $"CSNISPRNIP.G_PYLOAD_RNIP_{period}";
         var connections = Connections.CreateRnip();
         using var origin = connections.Origin;
@@ -20,8 +66,14 @@ internal sealed class RnipProcess : ITransferProcess
         var totalTimer = Stopwatch.StartNew();
         using var heartbeat = new RunHeartbeat(log);
         log.Write("Conectando a origen 10.251.80.6:1531 y destino 10.106.1.52:1521.");
+        state.Stage = "Conexión ORIGEN 10.251.80.6:1531";
+        log.Write(state.Stage);
         origin.Open();
+        log.Write("Conexión ORIGEN correcta.");
+        state.Stage = "Conexión DESTINO 10.106.1.52:1521";
+        log.Write(state.Stage);
         destination.Open();
+        log.Write("Conexión DESTINO correcta.");
         log.Write($"Oracle origen={origin.ServerVersion}; destino={destination.ServerVersion}; tabla={table}");
         using var select = origin.CreateCommand();
         select.CommandText = ReadSql();
@@ -32,6 +84,7 @@ internal sealed class RnipProcess : ITransferProcess
             try { select.Cancel(); } catch { /* Cancelación de mejor esfuerzo. */ }
         });
         cancellation.ThrowIfCancellationRequested();
+        state.Stage = "Consulta ORIGEN / primera fila";
         heartbeat.SetPhase("Esperando consulta / primera fila; todavía sin modificar destino");
         log.Write("Ejecutando consulta. DISTINCT puede demorar la primera fila.");
         var firstTimer = Stopwatch.StartNew();
@@ -44,6 +97,8 @@ internal sealed class RnipProcess : ITransferProcess
         log.Write($"Primera lectura={firstTimer.Elapsed.TotalSeconds:F1}s; columnas={columns.Length}; filas disponibles={hasRow}");
         // Metadatos y primera lectura correctos antes del DROP.
         heartbeat.SetPhase("Recreando tabla destino");
+        state.Stage = "Recreación de tabla DESTINO";
+        state.DestinationTouched = true;
         Recreate(destination, table, columns, log);
         using var writer = new ArrayBatchWriter(destination, table, columns);
         log.Write($"Lote automático={writer.Capacity:N0} filas; fetch=32 MiB; commit por lote.");
@@ -60,6 +115,7 @@ internal sealed class RnipProcess : ITransferProcess
         while (hasRow)
         {
             cancellation.ThrowIfCancellationRequested();
+            state.Stage = "Lectura ORIGEN";
             var readTimer = Stopwatch.StartNew();
             do
             {
@@ -71,6 +127,7 @@ internal sealed class RnipProcess : ITransferProcess
             readTime += readTimer.Elapsed;
             cancellation.ThrowIfCancellationRequested();
             var writeTimer = Stopwatch.StartNew();
+            state.Stage = "Inserción / commit DESTINO";
             rows += writer.Flush();
             heartbeat.Confirmed(rows);
             insertTime += writeTimer.Elapsed;
@@ -83,6 +140,7 @@ internal sealed class RnipProcess : ITransferProcess
         cancellation.ThrowIfCancellationRequested();
         loadTimer.Stop();
         heartbeat.SetPhase("Validando conteo destino");
+        state.Stage = "Conteo de validación DESTINO";
         using var count = destination.CreateCommand();
         count.CommandTimeout = 600;
         count.CommandText = $"SELECT COUNT(*) FROM {table}";
