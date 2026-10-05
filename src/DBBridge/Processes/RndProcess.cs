@@ -9,6 +9,8 @@ namespace DBBridge.Processes;
 
 internal sealed class RndProcess : ITransferProcess
 {
+    private const int BatchSize = 50000;
+    private const int NotifyAfter = 10000;
     private readonly bool fa;
     public string Name => fa ? "RND_FA" : "RND";
     public RndProcess(bool fa) => this.fa = fa;
@@ -71,6 +73,7 @@ internal sealed class RndProcess : ITransferProcess
             string template = exists ? table : previous!;
             List<string> columns = await Columns(destination, transaction, template, cancellation).ConfigureAwait(false);
 
+            TransferMetrics.StartStatistics(origin);
             Phase($"Consulta ORIGEN {Name}; esperando respuesta");
             using var select = Command(origin, null, RndQueries.Select(fa));
             using var registration = cancellation.Register(() =>
@@ -105,42 +108,54 @@ internal sealed class RndProcess : ITransferProcess
             }
             log.Write($"Preparación del destino={preparation.Elapsed.TotalSeconds:F1}s.");
 
-            Phase($"Carga masiva {Name}: lectura e inserción en flujo; lote=10000");
+            Phase($"Carga masiva {Name}: lector SQL nativo; lote={BatchSize}; motor=1.5");
+            TransferMetrics.StartStatistics(destination);
+            var metrics = new TransferMetrics();
             var load = Stopwatch.StartNew();
-            using var reader = new CountingReader(source,
-                () => log.Write($"PRIMERA FILA: desde inicio consulta={queryTimer.Elapsed.TotalSeconds:F1}s."));
+            long copied;
             var options = SqlBulkCopyOptions.TableLock | SqlBulkCopyOptions.KeepNulls
                 | SqlBulkCopyOptions.CheckConstraints | SqlBulkCopyOptions.FireTriggers;
             using (var bulk = new SqlBulkCopy(destination, options, transaction))
             {
                 bulk.DestinationTableName = qualified;
                 bulk.EnableStreaming = true;
-                bulk.BatchSize = 10000;
-                bulk.NotifyAfter = 10000;
+                bulk.BatchSize = BatchSize;
+                bulk.NotifyAfter = NotifyAfter;
                 bulk.BulkCopyTimeout = 0;
                 for (int i = 0; i < columns.Count; i++) bulk.ColumnMappings.Add(i, columns[i]);
                 long lastProgress = 0;
+                bool firstProgress = true;
                 bulk.SqlRowsCopied += (_, e) =>
                 {
                     e.Abort = cancellation.IsCancellationRequested;
                     long elapsed = load.ElapsedMilliseconds;
-                    if (elapsed - lastProgress < 10000) return;
+                    if (!firstProgress && elapsed - lastProgress < 10000) return;
+                    firstProgress = false;
                     lastProgress = elapsed;
-                    log.Write($"TRANSFERENCIA: filas enviadas={e.RowsCopied:N0}; pendientes de commit; " +
-                        $"ritmo={e.RowsCopied / Math.Max(load.Elapsed.TotalSeconds, 0.001):N0} filas/s; " +
-                        $"memoria administrada={GC.GetTotalMemory(false) / 1048576:N0} MiB.");
+                    log.Write($"TRANSFERENCIA: filas procesadas={e.RowsCopied:N0}; pendientes de validación y commit; " +
+                        $"ritmo={e.RowsCopied / Math.Max(load.Elapsed.TotalSeconds, 0.001):N0} filas/s; {metrics.Summary()}.");
                 };
-                await bulk.WriteToServerAsync(reader, cancellation).ConfigureAwait(false);
+                // El SqlDataReader directo permite usar la ruta nativa de SqlBulkCopy.
+                // El contador del proveedor evita envolver y cronometrar cada una de millones de filas.
+                await bulk.WriteToServerAsync(source, cancellation).ConfigureAwait(false);
+                copied = bulk.RowsCopied64; // Conteo final exacto, incluyendo el último lote incompleto.
             }
-            log.Write($"TRANSFERENCIA COMPLETA: filas leídas={reader.Rows:N0}; lectura+inserción={load.Elapsed.TotalSeconds:F1}s; " +
-                $"espera en Read={reader.ReadTime.TotalSeconds:F1}s; todavía pendiente de commit.");
+            load.Stop();
+            await source.CloseAsync().ConfigureAwait(false);
+            log.Write($"TRANSFERENCIA COMPLETA: filas procesadas={copied:N0}; lectura+inserción={load.Elapsed.TotalSeconds:F1}s; " +
+                $"ritmo={copied / Math.Max(load.Elapsed.TotalSeconds, 0.001):N0} filas/s; todavía pendiente de commit.");
+            log.Write($"MÉTRICAS CONSOLA durante transferencia: {metrics.Summary()}.");
+            TransferMetrics.WriteStatistics(origin, "ORIGEN (consulta y lectura)", log, queryTimer.Elapsed);
+            TransferMetrics.WriteStatistics(destination, "DESTINO (carga masiva)", log, load.Elapsed);
+            origin.StatisticsEnabled = false;
+            destination.StatisticsEnabled = false;
 
             Phase($"Validando conteo en {qualified}");
             using (var count = Command(destination, transaction, $"SELECT COUNT_BIG(*) FROM {qualified};"))
             {
                 long actual = Convert.ToInt64(await count.ExecuteScalarAsync(cancellation).ConfigureAwait(false));
-                if (actual != reader.Rows)
-                    throw new InvalidOperationException($"Conteo incorrecto: origen leído={reader.Rows:N0}; destino={actual:N0}. Se revertirá la carga.");
+                if (actual != copied)
+                    throw new InvalidOperationException($"Conteo incorrecto: filas procesadas={copied:N0}; destino={actual:N0}. Se revertirá la carga.");
             }
 
             string? oldest = RndTables.Oldest(names, today, fa);
@@ -157,11 +172,11 @@ internal sealed class RndProcess : ITransferProcess
             // Una vez iniciado el commit, no se interrumpe para evitar un resultado ambiguo por Ctrl+C.
             await transaction.CommitAsync(CancellationToken.None).ConfigureAwait(false);
             committed = true;
-            heartbeat.Confirmed(reader.Rows);
+            heartbeat.Confirmed(copied);
             log.Write(exists ? $"TABLA VACIADA Y RECARGADA: {qualified}."
                 : $"TABLA CREADA: {qualified}; estructura copiada de {RndTables.Qualified(previous!)}.");
             if (oldest is not null) log.Write($"TABLA BORRADA: {RndTables.Qualified(oldest)}; era la más antigua de {Name}.");
-            log.Write($"CARGA CONFIRMADA: tabla={qualified}; filas={reader.Rows:N0}; commit={commit.Elapsed.TotalSeconds:F1}s; total={total.Elapsed.TotalSeconds:F1}s.");
+            log.Write($"CARGA CONFIRMADA: tabla={qualified}; filas={copied:N0}; commit={commit.Elapsed.TotalSeconds:F1}s; total={total.Elapsed.TotalSeconds:F1}s.");
         }
         catch (Exception error)
         {
