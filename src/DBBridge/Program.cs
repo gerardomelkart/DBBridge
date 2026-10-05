@@ -2,6 +2,7 @@ using System.Globalization;
 using DBBridge.Infrastructure;
 using DBBridge.Processes;
 using Oracle.ManagedDataAccess.Client;
+using Microsoft.Data.SqlClient;
 
 namespace DBBridge;
 
@@ -11,7 +12,7 @@ internal static class Program
     {
         if (args.Length > 1)
         {
-            Console.Error.WriteLine("Uso: DBBridge.exe RNIP | RND. Sin argumentos muestra el menú.");
+            Console.Error.WriteLine("Uso: DBBridge.exe RNIP | RND | RND_FA. Sin argumentos muestra el menú.");
             return 64;
         }
 
@@ -21,7 +22,8 @@ internal static class Program
         int result = selected switch
         {
             "RNIP" => RunProcess(new RnipProcess()),
-            "RND" => ShowDevelopmentMessage(),
+            "RND" => RunProcess(new RndProcess(false)),
+            "RND_FA" => RunProcess(new RndProcess(true)),
             _ => InvalidProcess(selected)
         };
 
@@ -38,7 +40,8 @@ internal static class Program
     {
         Console.WriteLine("DBBridge - Selección de proceso");
         Console.WriteLine("1. RNIP");
-        Console.WriteLine("2. RND (en desarrollo)");
+        Console.WriteLine("2. RND");
+        Console.WriteLine("3. RND_FA");
         Console.WriteLine("0. Salir");
         Console.WriteLine();
         while (true)
@@ -52,27 +55,26 @@ internal static class Program
                 case "RNIP": return "RNIP";
                 case "2":
                 case "RND": return "RND";
+                case "3":
+                case "RND_FA": return "RND_FA";
                 case "0": return null;
-                default: Console.WriteLine("Opción inválida. Escribe 1, 2, RNIP, RND o 0."); break;
+                default: Console.WriteLine("Opción inválida. Escribe 1, 2, 3, RNIP, RND, RND_FA o 0."); break;
             }
         }
     }
 
-    private static int ShowDevelopmentMessage()
-    {
-        Console.WriteLine("RND: este módulo está en desarrollo. No se ejecutó ningún proceso.");
-        return 4;
-    }
-
     private static int InvalidProcess(string selected)
     {
-        Console.Error.WriteLine($"Proceso desconocido: '{selected}'. Procesos disponibles: RNIP y RND.");
+        Console.Error.WriteLine($"Proceso desconocido: '{selected}'. Procesos disponibles: RNIP, RND y RND_FA.");
         return 64;
     }
 
     private static int RunProcess(ITransferProcess process)
     {
-        string period = DateTime.Today.AddMonths(-1).ToString("yyyyMM", CultureInfo.InvariantCulture);
+        DateTime today = DateTime.Today;
+        string period = process.Name == "RNIP"
+            ? today.AddMonths(-1).ToString("yyyyMM", CultureInfo.InvariantCulture)
+            : today.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
         bool acquired = false;
         RunLog? log = null;
         using var cancellation = new CancellationTokenSource();
@@ -94,7 +96,7 @@ internal static class Program
                 return 2;
             }
             log = new RunLog(process.Name, period);
-            log.Write($"INICIO {process.Name}; periodo={period}; versión=1.3");
+            log.Write($"INICIO {process.Name}; periodo={period}; versión=1.4");
             process.Execute(period, log, cancellation.Token);
             log.Write("EXITO: carga finalizada y conteo validado.");
             return 0;
@@ -113,6 +115,17 @@ internal static class Program
         {
             log?.Write($"FALLO ORACLE {error.Number}: {error.Message}");
             Console.Error.WriteLine($"Error Oracle {error.Number}. Consulta el log.");
+            return 1;
+        }
+        catch (SqlException) when (cancellation.IsCancellationRequested)
+        {
+            log?.Write("CANCELADO: consulta la etapa y el estado del destino en este log.");
+            return 3;
+        }
+        catch (SqlException error)
+        {
+            log?.Write($"FALLO SQL SERVER {error.Number}; estado={error.State}; clase={error.Class}: {error.Message}");
+            Console.Error.WriteLine($"Error SQL Server {error.Number}. Consulta el log.");
             return 1;
         }
         catch (Exception error)
