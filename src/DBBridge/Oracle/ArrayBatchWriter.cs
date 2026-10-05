@@ -14,16 +14,15 @@ internal sealed class ArrayBatchWriter : IDisposable
     public int Capacity { get; }
     public int Count { get; private set; }
 
-    public ArrayBatchWriter(OracleConnection connection, string table,
-        ColumnDefinition[] columns)
+    public ArrayBatchWriter(OracleConnection connection, string table, ColumnDefinition[] columns)
     {
         this.connection = connection;
         this.columns = columns;
-        // Cota estimada de 16 MiB por lote; 5000 filas como máximo.
+        // Cota estimada de 32 MiB por lote; 5000 filas como máximo.
         long rowBytes = columns.Sum(c => c.BindType is OracleDbType.Decimal
             or OracleDbType.Date or OracleDbType.TimeStamp
             ? 64L : Math.Clamp((long)c.Size * 4, 128, 65536));
-        Capacity = (int)Math.Clamp(16L * 1024 * 1024 / Math.Max(rowBytes, 1), 1, 5000);
+        Capacity = (int)Math.Clamp(32L * 1024 * 1024 / Math.Max(rowBytes, 1), 1, 5000);
         values = columns.Select(c => c.CreateValues(Capacity)).ToArray();
         statuses = columns.Select(_ => new OracleParameterStatus[Capacity]).ToArray();
         sizes = columns.Select(_ => new int[Capacity]).ToArray();

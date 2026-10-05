@@ -5,8 +5,7 @@ using Oracle.ManagedDataAccess.Types;
 
 namespace DBBridge.Oracle;
 
-internal sealed record ColumnDefinition(
-    int Ordinal, string Name, OracleDbType BindType, string SqlType, int Size)
+internal sealed record ColumnDefinition(int Ordinal, string Name, OracleDbType BindType, string SqlType, int Size)
 {
     public static ColumnDefinition[] Read(OracleDataReader reader)
     {
