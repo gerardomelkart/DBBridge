@@ -96,7 +96,8 @@ internal static class Program
                 return 2;
             }
             log = new RunLog(process.Name, period);
-            log.Write($"INICIO {process.Name}; periodo={period}; versión=1.10; motor de carga SQL=1.7; validación de estructura.");
+            string detail = process.Name == "RNIP" ? "diagnóstico Oracle por etapas" : "motor de carga SQL=1.7; validación de estructura";
+            log.Write($"INICIO {process.Name}; periodo={period}; versión=1.11; {detail}.");
             process.Execute(period, log, cancellation.Token);
             log.Write("EXITO: carga finalizada y conteo validado.");
             return 0;

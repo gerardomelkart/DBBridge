@@ -65,6 +65,13 @@ internal sealed class RnipProcess : ITransferProcess
         using var destination = connections.Destination;
         var totalTimer = Stopwatch.StartNew();
         using var heartbeat = new RunHeartbeat(log);
+        void Phase(string value)
+        {
+            state.Stage = value;
+            heartbeat.SetPhase(value);
+            log.Write(value);
+        }
+        log.Write($"EQUIPO={Environment.MachineName}; proceso={Environment.ProcessId}; motor Oracle sin cambios; diagnóstico por etapas.");
         log.Write("Conectando a origen 10.251.80.6:1531 y destino 10.106.1.52:1521.");
         state.Stage = "Conexión ORIGEN 10.251.80.6:1531";
         log.Write(state.Stage);
@@ -84,14 +91,21 @@ internal sealed class RnipProcess : ITransferProcess
             try { select.Cancel(); } catch { /* Cancelación de mejor esfuerzo. */ }
         });
         cancellation.ThrowIfCancellationRequested();
-        state.Stage = "Consulta ORIGEN / primera fila";
-        heartbeat.SetPhase("Esperando consulta / primera fila; todavía sin modificar destino");
+        Phase("ORIGEN RNIP: ejecutando consulta (ExecuteReader); destino sin modificar");
         log.Write("Ejecutando consulta. DISTINCT puede demorar la primera fila.");
         var firstTimer = Stopwatch.StartNew();
         using var reader = select.ExecuteReader();
+        log.Write($"ExecuteReader completado={firstTimer.Elapsed.TotalSeconds:F1}s; todavía pendiente de la primera lectura.");
+        Phase("ORIGEN RNIP: leyendo estructura de columnas; destino sin modificar");
+        var metadataTimer = Stopwatch.StartNew();
         var columns = ColumnDefinition.Read(reader);
+        log.Write($"ESTRUCTURA ORIGEN: columnas={columns.Length}; lectura de metadatos={metadataTimer.Elapsed.TotalSeconds:F1}s.");
         reader.FetchSize = Math.Max(reader.RowSize, 32L * 1024 * 1024);
+        log.Write($"LECTOR ORIGEN: tamaño de fila={reader.RowSize:N0} bytes; fetch={reader.FetchSize:N0} bytes.");
+        Phase("ORIGEN RNIP: solicitando primera fila (Read); destino sin modificar");
+        var fetchTimer = Stopwatch.StartNew();
         bool hasRow = reader.Read();
+        log.Write($"PRIMER READ COMPLETADO: tiempo={fetchTimer.Elapsed.TotalSeconds:F1}s; filas disponibles={hasRow}.");
         firstTimer.Stop();
         cancellation.ThrowIfCancellationRequested();
         log.Write($"Primera lectura={firstTimer.Elapsed.TotalSeconds:F1}s; columnas={columns.Length}; filas disponibles={hasRow}");
