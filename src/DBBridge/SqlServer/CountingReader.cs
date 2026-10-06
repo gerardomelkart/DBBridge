@@ -9,33 +9,49 @@ internal sealed class CountingReader : DbDataReader
 {
     private readonly DbDataReader reader;
     private readonly Action firstRow;
+    private readonly CancellationToken cancellation;
     private long rows;
     private long readTicks;
+    private long batchEnd = long.MaxValue;
 
-    public CountingReader(DbDataReader reader, Action firstRow)
+    public CountingReader(DbDataReader reader, Action firstRow, CancellationToken cancellation = default)
     {
         this.reader = reader;
         this.firstRow = firstRow;
+        this.cancellation = cancellation;
     }
 
     public long Rows => Interlocked.Read(ref rows);
+    public bool Exhausted { get; private set; }
     public TimeSpan ReadTime => TimeSpan.FromSeconds(Interlocked.Read(ref readTicks) / (double)Stopwatch.Frequency);
+
+    public void StartBatch(int rowLimit)
+    {
+        if (rowLimit <= 0) throw new ArgumentOutOfRangeException(nameof(rowLimit));
+        batchEnd = checked(Rows + rowLimit);
+    }
 
     private bool Record(bool result, long started)
     {
         Interlocked.Add(ref readTicks, Stopwatch.GetTimestamp() - started);
+        if (!result) Exhausted = true;
         if (result && Interlocked.Increment(ref rows) == 1) firstRow();
         return result;
     }
 
     public override bool Read()
     {
+        cancellation.ThrowIfCancellationRequested();
+        if (Rows >= batchEnd || Exhausted) return false;
         long started = Stopwatch.GetTimestamp();
         return Record(reader.Read(), started);
     }
 
     public override async Task<bool> ReadAsync(CancellationToken cancellationToken)
     {
+        cancellation.ThrowIfCancellationRequested();
+        cancellationToken.ThrowIfCancellationRequested();
+        if (Rows >= batchEnd || Exhausted) return false;
         long started = Stopwatch.GetTimestamp();
         return Record(await reader.ReadAsync(cancellationToken).ConfigureAwait(false), started);
     }

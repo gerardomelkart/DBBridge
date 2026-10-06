@@ -8,6 +8,7 @@ internal sealed class RunHeartbeat : IDisposable
     private string phase = "Conectando";
     private long phaseStarted = Environment.TickCount64;
     private long rows;
+    private Func<long>? readCounter;
     private bool disposed;
 
     public RunHeartbeat(RunLog log)
@@ -27,6 +28,11 @@ internal sealed class RunHeartbeat : IDisposable
 
     public void Confirmed(long value) => Interlocked.Exchange(ref rows, value);
 
+    public void SetReadCounter(Func<long> value)
+    {
+        lock (gate) readCounter = value;
+    }
+
     private void Tick(object? state)
     {
         lock (gate)
@@ -35,7 +41,8 @@ internal sealed class RunHeartbeat : IDisposable
             double elapsed = (Environment.TickCount64 - phaseStarted) / 1000.0;
             try
             {
-                log.Write($"ESTADO: {phase}; tiempo en etapa={elapsed:F0}s; filas confirmadas={Interlocked.Read(ref rows):N0}.");
+                string readStatus = readCounter is null ? "" : $"; filas leídas={readCounter():N0}";
+                log.Write($"ESTADO: {phase}; tiempo en etapa={elapsed:F0}s{readStatus}; filas confirmadas={Interlocked.Read(ref rows):N0}.");
             }
             catch
             {

@@ -9,8 +9,10 @@ namespace DBBridge.Processes;
 
 internal sealed class RndProcess : ITransferProcess
 {
-    private const int BatchSize = 50000;
+    private const int BatchSize = 10000;
     private const int NotifyAfter = 10000;
+    private const int WindowRows = 50000;
+    private const int WindowTimeoutSeconds = 120;
     private readonly bool fa;
     public string Name => fa ? "RND_FA" : "RND";
     public RndProcess(bool fa) => this.fa = fa;
@@ -108,43 +110,62 @@ internal sealed class RndProcess : ITransferProcess
             }
             log.Write($"Preparación del destino={preparation.Elapsed.TotalSeconds:F1}s.");
 
-            Phase($"Carga masiva {Name}: lector SQL nativo; lote={BatchSize}; motor=1.5");
+            Phase($"Carga masiva {Name}: copia síncrona; esperando primera fila del origen; lote={BatchSize}; filas por llamada={WindowRows}; motor=1.7");
             TransferMetrics.StartStatistics(destination);
             var metrics = new TransferMetrics();
             var load = Stopwatch.StartNew();
-            long copied;
+            using var reader = new CountingReader(source, () =>
+            {
+                log.Write($"PRIMERA FILA RECIBIDA: desde inicio consulta={queryTimer.Elapsed.TotalSeconds:F1}s; desde inicio carga={load.Elapsed.TotalSeconds:F1}s.");
+                Phase($"Carga masiva {Name}: primera fila recibida; preparando transferencia al destino; motor=1.7");
+            }, cancellation);
+            heartbeat.SetReadCounter(() => reader.Rows);
+            long copied = 0;
+            long lastProgress = 0;
+            bool firstProgress = true;
             var options = SqlBulkCopyOptions.TableLock | SqlBulkCopyOptions.KeepNulls
                 | SqlBulkCopyOptions.CheckConstraints | SqlBulkCopyOptions.FireTriggers;
-            using (var bulk = new SqlBulkCopy(destination, options, transaction))
+            // Cada llamada consume como máximo 50,000 filas del mismo lector y la misma consulta.
+            // Las llamadas comparten una transacción: ninguna confirma parcialmente la carga.
+            while (!reader.Exhausted)
             {
+                cancellation.ThrowIfCancellationRequested();
+                reader.StartBatch(WindowRows);
+                long before = reader.Rows;
+                using var bulk = new SqlBulkCopy(destination, options, transaction);
                 bulk.DestinationTableName = qualified;
                 bulk.EnableStreaming = true;
                 bulk.BatchSize = BatchSize;
                 bulk.NotifyAfter = NotifyAfter;
-                bulk.BulkCopyTimeout = 0;
+                bulk.BulkCopyTimeout = WindowTimeoutSeconds;
                 for (int i = 0; i < columns.Count; i++) bulk.ColumnMappings.Add(i, columns[i]);
-                long lastProgress = 0;
-                bool firstProgress = true;
                 bulk.SqlRowsCopied += (_, e) =>
                 {
                     e.Abort = cancellation.IsCancellationRequested;
                     long elapsed = load.ElapsedMilliseconds;
                     if (!firstProgress && elapsed - lastProgress < 10000) return;
+                    if (firstProgress) Phase($"Carga masiva {Name}: transfiriendo filas al destino; motor=1.7");
                     firstProgress = false;
                     lastProgress = elapsed;
-                    log.Write($"TRANSFERENCIA: filas procesadas={e.RowsCopied:N0}; pendientes de validación y commit; " +
-                        $"ritmo={e.RowsCopied / Math.Max(load.Elapsed.TotalSeconds, 0.001):N0} filas/s; {metrics.Summary()}.");
+                    long processed = copied + e.RowsCopied;
+                    log.Write($"TRANSFERENCIA: filas procesadas={processed:N0}; pendientes de validación y commit; " +
+                        $"ritmo={processed / Math.Max(load.Elapsed.TotalSeconds, 0.001):N0} filas/s; {metrics.Summary()}.");
                 };
-                // El SqlDataReader directo permite usar la ruta nativa de SqlBulkCopy.
-                // El contador del proveedor evita envolver y cronometrar cada una de millones de filas.
-                await bulk.WriteToServerAsync(source, cancellation).ConfigureAwait(false);
-                copied = bulk.RowsCopied64; // Conteo final exacto, incluyendo el último lote incompleto.
+                // La consola dedica este hilo a la copia; evita continuaciones asíncronas por fila y columna.
+                // Ctrl+C cancela el SELECT y el lector verifica cancelación antes de leer cada fila.
+                // El timeout acota la espera del destino por llamada, no el tiempo total de millones de filas.
+                bulk.WriteToServer(reader);
+                long current = bulk.RowsCopied64;
+                if (current != reader.Rows - before)
+                    throw new InvalidOperationException($"Conteo de llamada incorrecto: leídas={reader.Rows - before:N0}; procesadas={current:N0}. Se revertirá la carga.");
+                copied = checked(copied + current);
             }
             load.Stop();
             await source.CloseAsync().ConfigureAwait(false);
             log.Write($"TRANSFERENCIA COMPLETA: filas procesadas={copied:N0}; lectura+inserción={load.Elapsed.TotalSeconds:F1}s; " +
                 $"ritmo={copied / Math.Max(load.Elapsed.TotalSeconds, 0.001):N0} filas/s; todavía pendiente de commit.");
             log.Write($"MÉTRICAS CONSOLA durante transferencia: {metrics.Summary()}.");
+            log.Write($"MÉTRICAS LECTOR: filas leídas={reader.Rows:N0}; tiempo acumulado en Read={reader.ReadTime.TotalSeconds:F1}s.");
             TransferMetrics.WriteStatistics(origin, "ORIGEN (consulta y lectura)", log, queryTimer.Elapsed);
             TransferMetrics.WriteStatistics(destination, "DESTINO (carga masiva)", log, load.Elapsed);
             origin.StatisticsEnabled = false;
