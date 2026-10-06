@@ -219,13 +219,18 @@ internal sealed class RndProcess : ITransferProcess
                     throw new InvalidOperationException($"Conteo incorrecto: filas procesadas={copied:N0}; destino={actual:N0}. Se revertirá la carga.");
             }
 
-            string? oldest = RndTables.Oldest(names, today, fa);
+            Phase($"Carga validada; revisando retención de {Name}; mínimo={RndTables.MinimumRetainedTables} tablas");
+            List<string> currentNames = await Tables(destination, transaction, cancellation).ConfigureAwait(false);
+            var retention = RndTables.Retention(currentNames, today, fa);
+            string? oldest = retention.ToDelete;
+            log.Write($"RETENCIÓN {Name}: tablas válidas hasta hoy={retention.Before}; mínimo={RndTables.MinimumRetainedTables}; " +
+                $"tablas después de limpieza={retention.After}; pendiente de commit.");
             if (oldest is not null)
             {
                 Phase($"Carga validada; borrando tabla más antigua {RndTables.Qualified(oldest)}; pendiente de commit");
                 await Execute(destination, transaction, $"DROP TABLE {RndTables.Qualified(oldest)};", cancellation).ConfigureAwait(false);
             }
-            else log.Write($"No hay una tabla anterior de {Name} que borrar; se conserva la tabla de hoy.");
+            else log.Write($"SIN BORRADO {Name}: se conservan las {retention.Before} tablas; mínimo requerido={RndTables.MinimumRetainedTables}.");
 
             cancellation.ThrowIfCancellationRequested();
             Phase("Confirmando transacción de carga y limpieza");
@@ -238,6 +243,7 @@ internal sealed class RndProcess : ITransferProcess
                 : $"TABLA CREADA: {qualified}; estructura copiada de {RndTables.Qualified(previous!)}.");
             if (legacy) log.Write("CAMPOS ADICIONALES CONFIRMADOS: NOMBRE_MP, APELLIDO_PATERNO_MP, APELLIDO_MATERNO_MP, ENTIDAD_RESIDENCIA, ENTIDAD_NACIMIENTO, MUNICIPIO_NACIMIENTO.");
             if (oldest is not null) log.Write($"TABLA BORRADA: {RndTables.Qualified(oldest)}; era la más antigua de {Name}.");
+            log.Write($"RETENCIÓN CONFIRMADA {Name}: tablas conservadas={retention.After}; mínimo={RndTables.MinimumRetainedTables}.");
             log.Write($"CARGA CONFIRMADA: tabla={qualified}; filas={copied:N0}; commit={commit.Elapsed.TotalSeconds:F1}s; total={total.Elapsed.TotalSeconds:F1}s.");
         }
         catch (Exception error)
