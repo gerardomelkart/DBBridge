@@ -1,4 +1,5 @@
 ﻿using System.Data;
+using System.Data.Common;
 using System.Diagnostics;
 using System.Globalization;
 using DBBridge.Infrastructure;
@@ -77,6 +78,13 @@ internal sealed class RndProcess : ITransferProcess
                 throw new InvalidOperationException($"No existe una tabla anterior válida de {Name} para crear {qualified}. No se modificó el destino.");
             string template = exists ? table : previous!;
             List<string> columns = await Columns(destination, transaction, template, cancellation).ConfigureAwait(false);
+            log.Write($"ESTRUCTURA DESTINO: tabla={RndTables.Qualified(template)}; columnas insertables={columns.Count}; tabla de hoy existente={exists}.");
+            bool legacy = !fa && RndSchema.IsLegacy(columns);
+            if (legacy && exists)
+                throw new InvalidOperationException($"La tabla de hoy {qualified} tiene la estructura anterior de 54 columnas. Se requieren 60; destino sin modificar.");
+            if (!legacy && columns.Count != 60)
+                throw new InvalidOperationException($"Estructura incompatible: {RndTables.Qualified(template)} tiene {columns.Count} columnas insertables; la consulta de {Name} requiere 60. Destino sin modificar.");
+            string createSql = $"SELECT TOP (0) * INTO {qualified} FROM {RndTables.Qualified(previous ?? template)};";
 
             TransferMetrics.StartStatistics(origin);
             Phase($"Consulta ORIGEN {Name}; esperando respuesta");
@@ -93,8 +101,26 @@ internal sealed class RndProcess : ITransferProcess
             Phase($"Verificando cantidad de columnas del origen {Name}");
             int sourceColumns = source.FieldCount;
             log.Write($"Respuesta de consulta={queryTimer.Elapsed.TotalSeconds:F1}s; columnas={sourceColumns}.");
-            if (sourceColumns != columns.Count)
-                throw new InvalidOperationException($"Estructura incompatible: consulta={sourceColumns} columnas; tabla {RndTables.Qualified(template)}={columns.Count} columnas insertables. Destino sin modificar.");
+            try
+            {
+                if (sourceColumns != 60)
+                    throw new InvalidOperationException($"Estructura incompatible: consulta={sourceColumns} columnas; se esperaban 60. Destino sin modificar.");
+                if (legacy)
+                {
+                    Phase("Preparando estructura RND de 60 columnas; conservando los seis campos adicionales del SP");
+                    var plan = RndSchema.Create(qualified, RndTables.Qualified(template), columns, source.GetColumnSchema());
+                    createSql = plan.Sql;
+                    columns = plan.Columns;
+                    log.Write("ESTRUCTURA NUEVA: 60 columnas; tipos y longitudes de los seis campos adicionales obtenidos del origen; tabla histórica sin alterar.");
+                }
+            }
+            catch (Exception error)
+            {
+                Phase($"FALLO DE ESTRUCTURA: {error.Message}");
+                try { select.Cancel(); }
+                catch (Exception cancelError) { log.Write($"No se pudo enviar cancelación al origen: {cancelError.Message}"); }
+                throw;
+            }
 
             // Los SP insertaban sin lista de columnas: el mapeo conserva ese mismo orden.
             for (int i = 0; i < columns.Count; i++)
@@ -120,7 +146,7 @@ internal sealed class RndProcess : ITransferProcess
             {
                 Phase($"Creando {qualified} desde {RndTables.Qualified(previous!)}; pendiente de commit");
                 await Execute(destination, transaction,
-                    $"SELECT TOP (0) * INTO {qualified} FROM {RndTables.Qualified(previous!)};", cancellation).ConfigureAwait(false);
+                    createSql, cancellation).ConfigureAwait(false);
             }
             log.Write($"Preparación del destino={preparation.Elapsed.TotalSeconds:F1}s.");
 
@@ -210,6 +236,7 @@ internal sealed class RndProcess : ITransferProcess
             heartbeat.Confirmed(copied);
             log.Write(exists ? $"TABLA VACIADA Y RECARGADA: {qualified}."
                 : $"TABLA CREADA: {qualified}; estructura copiada de {RndTables.Qualified(previous!)}.");
+            if (legacy) log.Write("CAMPOS ADICIONALES CONFIRMADOS: NOMBRE_MP, APELLIDO_PATERNO_MP, APELLIDO_MATERNO_MP, ENTIDAD_RESIDENCIA, ENTIDAD_NACIMIENTO, MUNICIPIO_NACIMIENTO.");
             if (oldest is not null) log.Write($"TABLA BORRADA: {RndTables.Qualified(oldest)}; era la más antigua de {Name}.");
             log.Write($"CARGA CONFIRMADA: tabla={qualified}; filas={copied:N0}; commit={commit.Elapsed.TotalSeconds:F1}s; total={total.Elapsed.TotalSeconds:F1}s.");
         }
