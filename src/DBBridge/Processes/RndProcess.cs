@@ -49,6 +49,9 @@ internal sealed class RndProcess : ITransferProcess
             await origin.OpenAsync(cancellation).ConfigureAwait(false);
             Phase("Conexión DESTINO 10.106.1.51:1433; base=RND");
             await destination.OpenAsync(cancellation).ConfigureAwait(false);
+            log.Write($"CONEXIONES: equipo={Environment.MachineName}; proceso={Environment.ProcessId}; " +
+                $"SPID origen={origin.ServerProcessId}; SPID destino={destination.ServerProcessId}; " +
+                $"conexión origen={origin.ClientConnectionId}; conexión destino={destination.ClientConnectionId}.");
             log.Write($"SQL Server origen={origin.ServerVersion}; destino={destination.ServerVersion}; tabla={qualified}");
 
             // La transacción conserva la tabla anterior si falla cualquier parte de la carga.
@@ -86,13 +89,24 @@ internal sealed class RndProcess : ITransferProcess
             });
             var queryTimer = Stopwatch.StartNew();
             using var source = await select.ExecuteReaderAsync(CommandBehavior.SequentialAccess, cancellation).ConfigureAwait(false);
-            log.Write($"Respuesta de consulta={queryTimer.Elapsed.TotalSeconds:F1}s; columnas={source.FieldCount}.");
-            if (source.FieldCount != columns.Count)
-                throw new InvalidOperationException($"Estructura incompatible: consulta={source.FieldCount} columnas; tabla {RndTables.Qualified(template)}={columns.Count} columnas insertables. Destino sin modificar.");
+            log.Write($"ExecuteReader completado={queryTimer.Elapsed.TotalSeconds:F1}s; todavía pendiente de leer filas.");
+            Phase($"Verificando cantidad de columnas del origen {Name}");
+            int sourceColumns = source.FieldCount;
+            log.Write($"Respuesta de consulta={queryTimer.Elapsed.TotalSeconds:F1}s; columnas={sourceColumns}.");
+            if (sourceColumns != columns.Count)
+                throw new InvalidOperationException($"Estructura incompatible: consulta={sourceColumns} columnas; tabla {RndTables.Qualified(template)}={columns.Count} columnas insertables. Destino sin modificar.");
 
             // Los SP insertaban sin lista de columnas: el mapeo conserva ese mismo orden.
             for (int i = 0; i < columns.Count; i++)
-                log.Write($"MAPEO {i + 1}: {source.GetName(i)} ({source.GetDataTypeName(i)}) -> {columns[i]}");
+            {
+                cancellation.ThrowIfCancellationRequested();
+                if (!fa) Phase($"Leyendo nombre de columna {i + 1}/{sourceColumns} del origen {Name}");
+                string sourceName = source.GetName(i);
+                if (!fa) Phase($"Leyendo tipo de columna {i + 1}/{sourceColumns}: {sourceName}");
+                string sourceType = source.GetDataTypeName(i);
+                log.Write($"MAPEO {i + 1}: {sourceName} ({sourceType}) -> {columns[i]}");
+            }
+            log.Write($"MAPEO COMPLETO: {sourceColumns} columnas; desde inicio consulta={queryTimer.Elapsed.TotalSeconds:F1}s.");
 
             var preparation = Stopwatch.StartNew();
             destinationTouched = true;

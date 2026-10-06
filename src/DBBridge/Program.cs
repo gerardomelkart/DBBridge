@@ -96,7 +96,7 @@ internal static class Program
                 return 2;
             }
             log = new RunLog(process.Name, period);
-            log.Write($"INICIO {process.Name}; periodo={period}; versión=1.7");
+            log.Write($"INICIO {process.Name}; periodo={period}; versión=1.9; motor de carga SQL=1.7; diagnóstico por etapas.");
             process.Execute(period, log, cancellation.Token);
             log.Write("EXITO: carga finalizada y conteo validado.");
             return 0;
