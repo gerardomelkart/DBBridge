@@ -59,7 +59,7 @@ internal sealed class RnipProcess : ITransferProcess
 
     private void ExecuteCore(string period, RunLog log, CancellationToken cancellation, ExecutionState state)
     {
-        string table = $"CSNISPRNIP.G_PYLOAD_RNIP_{period}";
+        string table = $"CSNISPRNIP.Z_PYLOAD_RNIP_{period}";
         var connections = Connections.CreateRnip();
         using var origin = connections.Origin;
         using var destination = connections.Destination;
