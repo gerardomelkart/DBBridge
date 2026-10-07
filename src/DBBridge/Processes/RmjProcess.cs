@@ -8,7 +8,13 @@ namespace DBBridge.Processes;
 
 internal sealed class RmjProcess : ITransferProcess
 {
-    public string Name => "RMJ";
+    private readonly bool daily;
+    public string Name => daily ? "RMJ_D" : "RMJ";
+
+    public RmjProcess(bool daily = false)
+    {
+        this.daily = daily;
+    }
 
     public void Execute(string period, RunLog log, CancellationToken cancellation)
     {
@@ -21,7 +27,9 @@ internal sealed class RmjProcess : ITransferProcess
         {
             string detail = DescribeFailure(error, cancellation);
             log.Write($"FALLO EN {state.Stage}: {detail}");
-            log.Write(state.DestinationTouched
+            log.Write(state.LoadValidated
+                ? "CARGA VALIDADA: los datos de la tabla están completos; falló la limpieza de tablas diarias. Consulta el detalle anterior."
+                : state.DestinationTouched
                 ? "La recreación del destino comenzó; la tabla puede estar vacía o incompleta. Reejecutar."
                 : "DESTINO SIN MODIFICAR: no comenzó la recreación ni la inserción.");
             throw;
@@ -30,8 +38,14 @@ internal sealed class RmjProcess : ITransferProcess
 
     private static string DescribeFailure(Exception error, CancellationToken cancellation)
     {
-        if (cancellation.IsCancellationRequested) return "Ejecución cancelada por el usuario.";
-        if (error is not OracleException oracle) return $"{error.GetType().Name}: {error.Message}";
+        if (cancellation.IsCancellationRequested)
+        {
+            return "Ejecución cancelada por el usuario.";
+        }
+        if (error is not OracleException oracle)
+        {
+            return $"{error.GetType().Name}: {error.Message}";
+        }
 
         string meaning = oracle.Number switch
         {
@@ -54,11 +68,13 @@ internal sealed class RmjProcess : ITransferProcess
     {
         public string Stage { get; set; } = "Preparando conexiones";
         public bool DestinationTouched { get; set; }
+        public bool LoadValidated { get; set; }
     }
 
     private void ExecuteCore(string period, RunLog log, CancellationToken cancellation, ExecutionState state)
     {
-        string table = $"CSNISPMANDAMIENTOS.Z_PYLOAD_RMJJ_{period}";
+        string tableName = daily ? OracleDailyTables.TableName("Z_PYLOAD_RMJJ_", period) : $"Z_PYLOAD_RMJJ_{period}";
+        string table = $"CSNISPMANDAMIENTOS.{tableName}";
         var connections = Connections.CreateRmj();
         using var origin = connections.Origin;
         using var destination = connections.Destination;
@@ -84,7 +100,7 @@ internal sealed class RmjProcess : ITransferProcess
         using var select = origin.CreateCommand();
         select.CommandText = RmjQuery.Sql;
         select.BindByName = true;
-        DateTime cutoff = RmjQuery.Cutoff(period);
+        DateTime cutoff = daily ? OracleDailyTables.Cutoff(period) : RmjQuery.Cutoff(period);
         select.Parameters.Add("fechaCorteExclusiva", OracleDbType.Date).Value = cutoff;
         log.Write($"CORTE RMJ: hasta {cutoff.AddDays(-1):yyyy-MM-dd} inclusive; filtro FECHA_REGISTRO < {cutoff:yyyy-MM-dd}; incluye fechas nulas.");
         select.CommandTimeout = 0; // La consulta de millones puede tardar; Ctrl+C cancela.
@@ -95,7 +111,7 @@ internal sealed class RmjProcess : ITransferProcess
         });
         cancellation.ThrowIfCancellationRequested();
         Phase("ORIGEN RMJ: ejecutando consulta (ExecuteReader); destino sin modificar");
-        log.Write("Ejecutando consulta de mandamientos; corte automático a mes vencido.");
+        log.Write("Ejecutando consulta de mandamientos; corte automático según el proceso seleccionado.");
         var firstTimer = Stopwatch.StartNew();
         using var reader = select.ExecuteReader();
         log.Write($"ExecuteReader completado={firstTimer.Elapsed.TotalSeconds:F1}s; todavía pendiente de la primera lectura.");
@@ -103,7 +119,9 @@ internal sealed class RmjProcess : ITransferProcess
         var metadataTimer = Stopwatch.StartNew();
         var columns = ColumnDefinition.Read(reader);
         if (columns.Length != 29)
+        {
             throw new InvalidOperationException($"RMJ requiere 29 columnas; origen devolvió {columns.Length}; destino sin modificar.");
+        }
         log.Write($"ESTRUCTURA ORIGEN: columnas={columns.Length}; lectura de metadatos={metadataTimer.Elapsed.TotalSeconds:F1}s.");
         reader.FetchSize = Math.Max(reader.RowSize, 32L * 1024 * 1024);
         log.Write($"LECTOR ORIGEN: tamaño de fila={reader.RowSize:N0} bytes; fetch={reader.FetchSize:N0} bytes.");
@@ -165,10 +183,19 @@ internal sealed class RmjProcess : ITransferProcess
         count.CommandText = $"SELECT COUNT(*) FROM {table}";
         long actual = long.Parse(count.ExecuteScalar().ToString()!, CultureInfo.InvariantCulture);
         if (actual != rows)
+        {
             throw new InvalidOperationException($"Conteo incorrecto: enviados={rows}, destino={actual}.");
+        }
         log.Progress(rows, readTime, insertTime, totalTimer.Elapsed, loadTimer.Elapsed);
         log.Write($"VALIDADO {table}: {actual:N0} filas; total={totalTimer.Elapsed.TotalSeconds:F1}s; " +
             $"primera fila={firstTimer.Elapsed.TotalSeconds:F1}s; transferencia={loadTimer.Elapsed.TotalSeconds:F1}s.");
+        state.LoadValidated = true;
+        if (daily)
+        {
+            cancellation.ThrowIfCancellationRequested();
+            Phase("DESTINO: retención de tablas diarias; carga validada");
+            OracleDailyTables.Cleanup(destination, "Z_PYLOAD_RMJJ_", period, log, cancellation);
+        }
     }
 
     private static void Recreate(OracleConnection destination, string table, ColumnDefinition[] columns, RunLog log)

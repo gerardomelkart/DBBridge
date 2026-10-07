@@ -12,19 +12,24 @@ internal static class Program
     {
         if (args.Length > 1)
         {
-            Console.Error.WriteLine("Uso: DBBridge.exe RNIP | RND | RND_FA | RMJ. Sin argumentos muestra el menú.");
+            Console.Error.WriteLine("Uso: DBBridge.exe RNIP | RND | RND_FA | RMJ | RNIP_D | RMJ_D. Sin argumentos muestra el menú.");
             return 64;
         }
 
         bool interactive = args.Length == 0;
         string? selected = interactive ? AskProcess() : args[0].Trim().ToUpperInvariant();
-        if (selected is null) return 0;
+        if (selected is null)
+        {
+            return 0;
+        }
         int result = selected switch
         {
             "RNIP" => RunProcess(new RnipProcess()),
             "RND" => RunProcess(new RndProcess(false)),
             "RND_FA" => RunProcess(new RndProcess(true)),
             "RMJ" => RunProcess(new RmjProcess()),
+            "RNIP_D" => RunProcess(new RnipProcess(true)),
+            "RMJ_D" => RunProcess(new RmjProcess(true)),
             _ => InvalidProcess(selected)
         };
 
@@ -44,13 +49,18 @@ internal static class Program
         Console.WriteLine("2. RND");
         Console.WriteLine("3. RND_FA");
         Console.WriteLine("4. RMJ (Mandamientos)");
+        Console.WriteLine("5. RNIP_D (Corte diario)");
+        Console.WriteLine("6. RMJ_D (Mandamientos diario)");
         Console.WriteLine("0. Salir");
         Console.WriteLine();
         while (true)
         {
             Console.Write("¿Qué proceso deseas ejecutar? ");
             string? input = Console.ReadLine();
-            if (input is null) return null;
+            if (input is null)
+            {
+                return null;
+            }
             switch (input.Trim().ToUpperInvariant())
             {
                 case "1":
@@ -61,15 +71,19 @@ internal static class Program
                 case "RND_FA": return "RND_FA";
                 case "4":
                 case "RMJ": return "RMJ";
+                case "5":
+                case "RNIP_D": return "RNIP_D";
+                case "6":
+                case "RMJ_D": return "RMJ_D";
                 case "0": return null;
-                default: Console.WriteLine("Opción inválida. Escribe 1, 2, 3, 4, RNIP, RND, RND_FA, RMJ o 0."); break;
+                default: Console.WriteLine("Opción inválida. Escribe 1, 2, 3, 4, 5, 6, RNIP, RND, RND_FA, RMJ, RNIP_D, RMJ_D o 0."); break;
             }
         }
     }
 
     private static int InvalidProcess(string selected)
     {
-        Console.Error.WriteLine($"Proceso desconocido: '{selected}'. Procesos disponibles: RNIP, RND, RND_FA y RMJ.");
+        Console.Error.WriteLine($"Proceso desconocido: '{selected}'. Procesos disponibles: RNIP, RND, RND_FA, RMJ, RNIP_D y RMJ_D.");
         return 64;
     }
 
@@ -100,8 +114,8 @@ internal static class Program
                 return 2;
             }
             log = new RunLog(process.Name, period);
-            string detail = process.Name is "RNIP" or "RMJ" ? "diagnóstico Oracle por etapas" : "motor de carga SQL=1.7; validación de estructura";
-            log.Write($"INICIO {process.Name}; periodo={period}; versión=1.13; {detail}.");
+            string detail = process.Name is "RNIP" or "RMJ" or "RNIP_D" or "RMJ_D" ? "diagnóstico Oracle por etapas" : "motor de carga SQL=1.7; validación de estructura";
+            log.Write($"INICIO {process.Name}; periodo={period}; versión=1.14; {detail}.");
             process.Execute(period, log, cancellation.Token);
             log.Write("EXITO: carga finalizada y conteo validado.");
             return 0;
@@ -143,7 +157,10 @@ internal static class Program
         {
             Console.CancelKeyPress -= handler;
             log?.Dispose();
-            if (acquired) mutex.ReleaseMutex();
+            if (acquired)
+            {
+                mutex.ReleaseMutex();
+            }
         }
     }
 }

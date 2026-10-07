@@ -9,7 +9,13 @@ namespace DBBridge.Processes;
 
 internal sealed class RnipProcess : ITransferProcess
 {
-    public string Name => "RNIP";
+    private readonly bool daily;
+    public string Name => daily ? "RNIP_D" : "RNIP";
+
+    public RnipProcess(bool daily = false)
+    {
+        this.daily = daily;
+    }
 
     public void Execute(string period, RunLog log, CancellationToken cancellation)
     {
@@ -22,7 +28,9 @@ internal sealed class RnipProcess : ITransferProcess
         {
             string detail = DescribeFailure(error, cancellation);
             log.Write($"FALLO EN {state.Stage}: {detail}");
-            log.Write(state.DestinationTouched
+            log.Write(state.LoadValidated
+                ? "CARGA VALIDADA: los datos de la tabla están completos; falló la limpieza de tablas diarias. Consulta el detalle anterior."
+                : state.DestinationTouched
                 ? "La recreación del destino comenzó; la tabla puede estar vacía o incompleta. Reejecutar."
                 : "DESTINO SIN MODIFICAR: no comenzó la recreación ni la inserción.");
             throw;
@@ -31,8 +39,14 @@ internal sealed class RnipProcess : ITransferProcess
 
     private static string DescribeFailure(Exception error, CancellationToken cancellation)
     {
-        if (cancellation.IsCancellationRequested) return "Ejecución cancelada por el usuario.";
-        if (error is not OracleException oracle) return $"{error.GetType().Name}: {error.Message}";
+        if (cancellation.IsCancellationRequested)
+        {
+            return "Ejecución cancelada por el usuario.";
+        }
+        if (error is not OracleException oracle)
+        {
+            return $"{error.GetType().Name}: {error.Message}";
+        }
 
         string meaning = oracle.Number switch
         {
@@ -55,11 +69,13 @@ internal sealed class RnipProcess : ITransferProcess
     {
         public string Stage { get; set; } = "Preparando conexiones";
         public bool DestinationTouched { get; set; }
+        public bool LoadValidated { get; set; }
     }
 
     private void ExecuteCore(string period, RunLog log, CancellationToken cancellation, ExecutionState state)
     {
-        string table = $"CSNISPRNIP.Z_PYLOAD_RNIP_{period}";
+        string tableName = daily ? OracleDailyTables.TableName("Z_PYLOAD_RNIP_", period) : $"Z_PYLOAD_RNIP_{period}";
+        string table = $"CSNISPRNIP.{tableName}";
         var connections = Connections.CreateRnip();
         using var origin = connections.Origin;
         using var destination = connections.Destination;
@@ -84,6 +100,14 @@ internal sealed class RnipProcess : ITransferProcess
         log.Write($"Oracle origen={origin.ServerVersion}; destino={destination.ServerVersion}; tabla={table}");
         using var select = origin.CreateCommand();
         select.CommandText = ReadSql();
+        if (daily)
+        {
+            DateTime cutoff = OracleDailyTables.Cutoff(period);
+            select.CommandText += "\nWHERE (EM.FECHA_REGISTRO < :fechaCorteExclusiva OR EM.FECHA_REGISTRO IS NULL)";
+            select.BindByName = true;
+            select.Parameters.Add("fechaCorteExclusiva", OracleDbType.Date).Value = cutoff;
+            log.Write($"CORTE DIARIO RNIP: hasta {cutoff.AddDays(-1):yyyy-MM-dd} inclusive; filtro sobre EM.FECHA_REGISTRO; incluye fechas nulas.");
+        }
         select.CommandTimeout = 0; // La consulta de millones puede tardar; Ctrl+C cancela.
         select.FetchSize = 32 * 1024 * 1024;
         using var registration = cancellation.Register(() =>
@@ -160,10 +184,19 @@ internal sealed class RnipProcess : ITransferProcess
         count.CommandText = $"SELECT COUNT(*) FROM {table}";
         long actual = long.Parse(count.ExecuteScalar().ToString()!, CultureInfo.InvariantCulture);
         if (actual != rows)
+        {
             throw new InvalidOperationException($"Conteo incorrecto: enviados={rows}, destino={actual}.");
+        }
         log.Progress(rows, readTime, insertTime, totalTimer.Elapsed, loadTimer.Elapsed);
         log.Write($"VALIDADO {table}: {actual:N0} filas; total={totalTimer.Elapsed.TotalSeconds:F1}s; " +
             $"primera fila={firstTimer.Elapsed.TotalSeconds:F1}s; transferencia={loadTimer.Elapsed.TotalSeconds:F1}s.");
+        state.LoadValidated = true;
+        if (daily)
+        {
+            cancellation.ThrowIfCancellationRequested();
+            Phase("DESTINO: retención de tablas diarias; carga validada");
+            OracleDailyTables.Cleanup(destination, "Z_PYLOAD_RNIP_", period, log, cancellation);
+        }
     }
 
     private static string ReadSql()

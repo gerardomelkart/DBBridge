@@ -6,11 +6,11 @@ internal static class RmjQuery
 {
     public static DateTime Cutoff(string period)
     {
-        if (!DateTime.TryParseExact(period + "01", "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime month)) 
+        if (!DateTime.TryParseExact(period + "01", "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime month))
         {
             throw new ArgumentException("Periodo RMJ inválido; se requiere yyyyMM.", nameof(period));
         }
-            
+
         return month.AddMonths(1);
     }
 
@@ -38,11 +38,11 @@ internal static class RmjQuery
                    WHEN 5 THEN 'PRESCRITO'
                    WHEN 6 THEN 'VIGENTE'
                    WHEN 7 THEN 'INFORMADA'
-                   WHEN 8 THEN 'SUSPENCIï¿½N TEMPORAL'
+                   WHEN 8 THEN 'SUSPENSIÓN TEMPORAL'
                    WHEN 9 THEN 'EN TRAMITE'
                    WHEN 10 THEN 'CUMPLIMENTADA'
                    WHEN 11 THEN 'PARCIALMENTE CUMPLIMENTADA'
-                   WHEN 12 THEN 'SUSPENCIï¿½N DEFINITIVA'
+                   WHEN 12 THEN 'SUSPENSIÓN DEFINITIVA'
                    WHEN 13 THEN 'CANCELADO POR DUPLICIDAD'
                    WHEN 9999 THEN 'SIN DATO'
                    ELSE 'SIN INFORMACION'
