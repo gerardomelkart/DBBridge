@@ -12,7 +12,7 @@ internal static class Program
     {
         if (args.Length > 1)
         {
-            Console.Error.WriteLine("Uso: DBBridge.exe RNIP | RND | RND_FA. Sin argumentos muestra el menú.");
+            Console.Error.WriteLine("Uso: DBBridge.exe RNIP | RND | RND_FA | RMJ. Sin argumentos muestra el menú.");
             return 64;
         }
 
@@ -24,6 +24,7 @@ internal static class Program
             "RNIP" => RunProcess(new RnipProcess()),
             "RND" => RunProcess(new RndProcess(false)),
             "RND_FA" => RunProcess(new RndProcess(true)),
+            "RMJ" => RunProcess(new RmjProcess()),
             _ => InvalidProcess(selected)
         };
 
@@ -42,6 +43,7 @@ internal static class Program
         Console.WriteLine("1. RNIP");
         Console.WriteLine("2. RND");
         Console.WriteLine("3. RND_FA");
+        Console.WriteLine("4. RMJ (Mandamientos)");
         Console.WriteLine("0. Salir");
         Console.WriteLine();
         while (true)
@@ -57,22 +59,24 @@ internal static class Program
                 case "RND": return "RND";
                 case "3":
                 case "RND_FA": return "RND_FA";
+                case "4":
+                case "RMJ": return "RMJ";
                 case "0": return null;
-                default: Console.WriteLine("Opción inválida. Escribe 1, 2, 3, RNIP, RND, RND_FA o 0."); break;
+                default: Console.WriteLine("Opción inválida. Escribe 1, 2, 3, 4, RNIP, RND, RND_FA, RMJ o 0."); break;
             }
         }
     }
 
     private static int InvalidProcess(string selected)
     {
-        Console.Error.WriteLine($"Proceso desconocido: '{selected}'. Procesos disponibles: RNIP, RND y RND_FA.");
+        Console.Error.WriteLine($"Proceso desconocido: '{selected}'. Procesos disponibles: RNIP, RND, RND_FA y RMJ.");
         return 64;
     }
 
     private static int RunProcess(ITransferProcess process)
     {
         DateTime today = DateTime.Today;
-        string period = process.Name == "RNIP"
+        string period = process.Name is "RNIP" or "RMJ"
             ? today.AddMonths(-1).ToString("yyyyMM", CultureInfo.InvariantCulture)
             : today.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
         bool acquired = false;
@@ -96,8 +100,8 @@ internal static class Program
                 return 2;
             }
             log = new RunLog(process.Name, period);
-            string detail = process.Name == "RNIP" ? "diagnóstico Oracle por etapas" : "motor de carga SQL=1.7; validación de estructura";
-            log.Write($"INICIO {process.Name}; periodo={period}; versión=1.12; {detail}.");
+            string detail = process.Name is "RNIP" or "RMJ" ? "diagnóstico Oracle por etapas" : "motor de carga SQL=1.7; validación de estructura";
+            log.Write($"INICIO {process.Name}; periodo={period}; versión=1.13; {detail}.");
             process.Execute(period, log, cancellation.Token);
             log.Write("EXITO: carga finalizada y conteo validado.");
             return 0;
