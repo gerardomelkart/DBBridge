@@ -25,7 +25,7 @@ internal static class OracleDailyTables
     {
         ValidatePrefix(prefix);
         RunDate(period);
-        return $"{prefix}{period}D";
+        return $"{prefix}{period}_D";
     }
 
     public static RetentionPlan Retention(IEnumerable<string> names, string prefix, DateTime today)
