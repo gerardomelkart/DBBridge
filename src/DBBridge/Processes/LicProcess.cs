@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Globalization;
 using DBBridge.Infrastructure;
 using DBBridge.Oracle;
@@ -98,17 +98,13 @@ internal sealed class LicProcess : ITransferProcess
         log.Write("Conexión DESTINO correcta.");
         log.Write($"Oracle origen={origin.ServerVersion}; destino={destination.ServerVersion}; tabla={table}");
         using var select = origin.CreateCommand();
-        select.CommandText = LicQuery.Sql(daily);
+        select.CommandText = LicQuery.Sql();
         select.BindByName = true;
-        DateTime cutoff = daily ? OracleDailyTables.Cutoff(period) : LicQuery.MonthStart(period).AddMonths(1);
-        if (!daily)
-        {
-            DateTime start = LicQuery.MonthStart(period);
-            select.Parameters.Add("fechaInicio", OracleDbType.Date).Value = start;
-            log.Write($"INICIO DE RANGO LIC: {start:yyyy-MM-dd}; filtro sobre LI.FECHA_ACTUALIZA; solo actualizaciones del mes.");
-        }
+        var (start, cutoff) = LicQuery.Range(period, daily);
+        select.Parameters.Add("fechaInicio", OracleDbType.Date).Value = start;
+        log.Write($"INICIO DE RANGO LIC: {start:yyyy-MM-dd}; filtro sobre LI.FECHA_ACTUALIZA; acumulado del año del corte.");
         select.Parameters.Add("fechaCorteExclusiva", OracleDbType.Date).Value = cutoff;
-        log.Write($"CORTE LIC: hasta {cutoff.AddDays(-1):yyyy-MM-dd} inclusive; filtro LI.FECHA_ACTUALIZA < {cutoff:yyyy-MM-dd}; incluye fechas nulas={daily}.");
+        log.Write($"CORTE LIC: hasta {cutoff.AddDays(-1):yyyy-MM-dd} inclusive; filtro LI.FECHA_ACTUALIZA < {cutoff:yyyy-MM-dd}; fechas nulas excluidas; revisión LIC=1.15.2.");
         select.CommandTimeout = 0; // La consulta de millones puede tardar; Ctrl+C cancela.
         select.FetchSize = 32 * 1024 * 1024;
         using var registration = cancellation.Register(() =>

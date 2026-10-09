@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 
 namespace DBBridge.Oracle;
 
@@ -14,9 +14,14 @@ internal static class LicQuery
         return month;
     }
 
-    public static string Sql(bool daily) => Select + (daily
-        ? "\nWHERE (LI.FECHA_ACTUALIZA < :fechaCorteExclusiva OR LI.FECHA_ACTUALIZA IS NULL)"
-        : "\nWHERE LI.FECHA_ACTUALIZA >= :fechaInicio AND LI.FECHA_ACTUALIZA < :fechaCorteExclusiva");
+    public static string Sql() => Select + "\nWHERE LI.FECHA_ACTUALIZA >= :fechaInicio AND LI.FECHA_ACTUALIZA < :fechaCorteExclusiva";
+
+    public static (DateTime Start, DateTime Cutoff) Range(string period, bool daily)
+    {
+        DateTime cutoff = daily ? OracleDailyTables.RunDate(period) : MonthStart(period).AddMonths(1);
+        DateTime lastIncluded = cutoff.AddDays(-1);
+        return (new DateTime(lastIncluded.Year, 1, 1), cutoff);
+    }
 
     private const string Select = """
         SELECT
