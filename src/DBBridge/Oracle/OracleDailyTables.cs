@@ -87,7 +87,9 @@ internal static class OracleDailyTables
 
     private static DateTime? TableDate(string name, string prefix)
     {
-        if (!name.StartsWith(prefix, StringComparison.Ordinal) || name.Length != prefix.Length + 9 || !name.EndsWith('D'))
+        bool validSuffix = (name.Length == prefix.Length + 10 && name.EndsWith("_D", StringComparison.Ordinal))
+            || (name.Length == prefix.Length + 9 && name.EndsWith('D'));
+        if (!name.StartsWith(prefix, StringComparison.Ordinal) || !validSuffix)
         {
             return null;
         }
@@ -100,7 +102,7 @@ internal static class OracleDailyTables
 
     private static void ValidatePrefix(string prefix)
     {
-        if (prefix is not "Z_PYLOAD_RNIP_" and not "Z_PYLOAD_RMJJ_")
+        if (prefix is not "Z_PYLOAD_RNIP_" and not "Z_PYLOAD_RMJJ_" and not "Z_PYLOAD_LC_")
         {
             throw new ArgumentException("Serie diaria Oracle no reconocida.", nameof(prefix));
         }

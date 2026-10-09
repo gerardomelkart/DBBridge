@@ -12,7 +12,7 @@ internal static class Program
     {
         if (args.Length > 1)
         {
-            Console.Error.WriteLine("Uso: DBBridge.exe RNIP | RND | RND_FA | RMJ | RNIP_D | RMJ_D. Sin argumentos muestra el menú.");
+            Console.Error.WriteLine("Uso: DBBridge.exe RNIP | RND | RND_FA | RMJ | RNIP_D | RMJ_D | LIC | LIC_D. Sin argumentos muestra el menú.");
             return 64;
         }
 
@@ -30,6 +30,8 @@ internal static class Program
             "RMJ" => RunProcess(new RmjProcess()),
             "RNIP_D" => RunProcess(new RnipProcess(true)),
             "RMJ_D" => RunProcess(new RmjProcess(true)),
+            "LIC" => RunProcess(new LicProcess()),
+            "LIC_D" => RunProcess(new LicProcess(true)),
             _ => InvalidProcess(selected)
         };
 
@@ -51,6 +53,8 @@ internal static class Program
         Console.WriteLine("4. RMJ (Mandamientos)");
         Console.WriteLine("5. RNIP_D (Corte diario)");
         Console.WriteLine("6. RMJ_D (Mandamientos diario)");
+        Console.WriteLine("7. LIC (Licencias mensual)");
+        Console.WriteLine("8. LIC_D (Licencias diario)");
         Console.WriteLine("0. Salir");
         Console.WriteLine();
         while (true)
@@ -75,22 +79,26 @@ internal static class Program
                 case "RNIP_D": return "RNIP_D";
                 case "6":
                 case "RMJ_D": return "RMJ_D";
+                case "7":
+                case "LIC": return "LIC";
+                case "8":
+                case "LIC_D": return "LIC_D";
                 case "0": return null;
-                default: Console.WriteLine("Opción inválida. Escribe 1, 2, 3, 4, 5, 6, RNIP, RND, RND_FA, RMJ, RNIP_D, RMJ_D o 0."); break;
+                default: Console.WriteLine("Opción inválida. Escribe 1 a 8, nombre del proceso o 0."); break;
             }
         }
     }
 
     private static int InvalidProcess(string selected)
     {
-        Console.Error.WriteLine($"Proceso desconocido: '{selected}'. Procesos disponibles: RNIP, RND, RND_FA, RMJ, RNIP_D y RMJ_D.");
+        Console.Error.WriteLine($"Proceso desconocido: '{selected}'. Procesos disponibles: RNIP, RND, RND_FA, RMJ, RNIP_D, RMJ_D, LIC y LIC_D.");
         return 64;
     }
 
     private static int RunProcess(ITransferProcess process)
     {
         DateTime today = DateTime.Today;
-        string period = process.Name is "RNIP" or "RMJ"
+        string period = process.Name is "RNIP" or "RMJ" or "LIC"
             ? today.AddMonths(-1).ToString("yyyyMM", CultureInfo.InvariantCulture)
             : today.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
         bool acquired = false;
@@ -114,8 +122,8 @@ internal static class Program
                 return 2;
             }
             log = new RunLog(process.Name, period);
-            string detail = process.Name is "RNIP" or "RMJ" or "RNIP_D" or "RMJ_D" ? "diagnóstico Oracle por etapas" : "motor de carga SQL=1.7; validación de estructura";
-            log.Write($"INICIO {process.Name}; periodo={period}; versión=1.14; {detail}.");
+            string detail = process.Name is "RNIP" or "RMJ" or "RNIP_D" or "RMJ_D" or "LIC" or "LIC_D" ? "diagnóstico Oracle por etapas" : "motor de carga SQL=1.7; validación de estructura";
+            log.Write($"INICIO {process.Name}; periodo={period}; versión=1.15; {detail}.");
             process.Execute(period, log, cancellation.Token);
             log.Write("EXITO: carga finalizada y conteo validado.");
             return 0;

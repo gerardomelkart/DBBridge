@@ -23,6 +23,14 @@ internal static class Connections
             Create("CSNISPMANDAMIENTOS", passwords.Destination, "10.106.1.52", 1521, "SID", "BBDDOrac"));
     }
 
+    public static (OracleConnection Origin, OracleConnection Destination) CreateLic()
+    {
+        var passwords = Credentials.Get();
+        return (
+            Create("USR_CNI", passwords.Origin, "10.251.80.6", 1534, "SERVICE_NAME", "drp_vhcl"),
+            Create("CSNISPLICENCIA", passwords.Destination, "10.106.1.52", 1521, "SID", "BBDDOrac"));
+    }
+
     private static OracleConnection Create(string user, string password, string host, int port, string connectKind, string database)
     {
         var builder = new OracleConnectionStringBuilder
