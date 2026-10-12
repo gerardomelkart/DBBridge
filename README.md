@@ -1,89 +1,84 @@
-# DBBridge — primera carga RNIP
+# DBBridge 1.16
 
-Consola C# para Windows, .NET 8. Ejecuta RNIP sin argumentos ni configuración externa.
-El mes anterior se calcula con la fecha local del equipo al iniciar (enero → diciembre del año anterior).
+Consola C# para Windows y .NET 8. Ejecuta ocho procesos independientes mediante menú o un argumento de línea de comandos. Las conexiones, credenciales y reglas siguen fijas en código; las consultas SQL se incluyen dentro del ejecutable al compilar.
 
-## Prueba desde Visual Studio
+## Actualizar desde Git
 
-1. Extraer el ZIP y copiar todo su contenido a la carpeta del repositorio DBBridge.
-2. Abrir `DBBridge.sln` con Visual Studio compatible con .NET 8 y el SDK .NET 8 instalado.
-3. Restaurar NuGet y seleccionar DBBridge como proyecto de inicio.
-4. Compilar primero. Ejecutar con Ctrl+F5 desde el equipo con acceso a ambos Oracle.
-5. Revisar el resumen final y el archivo `logs/RNIP_*.log` junto al ejecutable
-   (en Debug: `src/DBBridge/bin/Debug/net8.0/logs`).
+Después de esperar a que terminen las cargas y cerrar Visual Studio, actualizar la copia local con `git pull` (si hay cambios locales, revisarlos antes). Abrir la solución existente, restaurar NuGet, compilar y probar. Publicar nuevamente el EXE para las tareas; los ocho BATs están en `bats`.
 
-**La ejecución borra y reconstruye la tabla G del mes anterior.**
-Ejemplo al ejecutar en octubre de 2026: `CSNISPRNIP.G_PYLOAD_RNIP_202609`.
-No modifica tablas X ni Z ni tablas de otros periodos. No crea bases de datos.
+## Instalar desde un ZIP
 
-Origen: 10.251.80.6:1531, SERVICE_NAME drp_crmn, USR_CNI.
-Destino: 10.106.1.52:1521, SID BBDDOrac, CSNISPRNIP.
-El usuario destino debe poder crear y eliminar sus tablas y disponer de cuota suficiente.
+1. Cerrar Visual Studio y esperar a que terminen las cargas que estén en ejecución.
+2. Respaldar la carpeta actual `src/DBBridge` fuera del repositorio. El respaldo también conserva cualquier log de pruebas que esté en `bin`.
+3. Sustituir **completa** la carpeta `src/DBBridge` por la del ZIP. No dejar copias de archivos C# anteriores dentro de esa carpeta: el SDK compila todos los `.cs` que encuentre allí.
+4. Copiar este README a la raíz del repositorio. Conservar la solución `DBBridge.sln` existente; su ruta de proyecto sigue siendo la misma.
+5. Abrir la solución, restaurar NuGet y compilar. También puede usarse `dotnet build src/DBBridge/DBBridge.csproj -c Release`.
+6. Probar desde Visual Studio con Ctrl+F5. Para las tareas, publicar otra vez y colocar los BATs junto al EXE actualizado.
 
-## Credenciales
+El ZIP incluye el `.csproj` porque ahora incorpora las cinco consultas de `Queries`. No contiene ejecutables, DLLs, `bin`, `obj`, datos ni logs.
 
-Las conexiones y contraseñas están fijas en código. El archivo
-`src/DBBridge/Security/Credentials.Local.cs` se incluye en Git por decisión
-expresa del propietario. No requiere configuración para esta prueba.
-No se imprimen cadenas de conexión ni contraseñas en los logs.
+## Organización
 
-## Millones de registros
+| Carpeta / archivo | Responsabilidad |
+|---|---|
+| `Program.cs` | Arranque y selección de ejecución interactiva o por argumento. |
+| `Processes` | Catálogo, opciones del menú y reglas propias de RNIP, RMJ, LIC y RND. |
+| `Oracle` | Motor compartido, creación de tablas, tipos nativos, inserción por arreglos, errores y retención Oracle. |
+| `SqlServer` | Motor RND/RND_FA, SqlBulkCopy, adaptación de estructura, métricas y retención SQL Server. |
+| `Queries/Oracle` | Consultas RNIP, RMJ y LIC. |
+| `Queries/SqlServer` | Consultas RND y RND_FA. |
+| `Infrastructure` | Ejecución, mutex, cancelación, menú, recursos SQL y logs. |
+| `Security` | Credenciales existentes. |
+| `bats` (raíz) | Ocho lanzadores para copiar junto al EXE. |
 
-- Un único cursor de origen: no hay paginación OFFSET, DataTable de datos ni carga completa en RAM.
-- Fetch de 8 MiB y lotes de hasta 5000 filas, reducidos automáticamente según el ancho declarado.
-- Array binding: un INSERT parametrizado para todas las filas del lote, con commit por lote.
-- Fechas DATE y números NUMBER conservan sus tipos; OracleDecimal evita convertir números a decimal .NET.
-- Longitudes amplias de texto se conservan en CLOB; no se recortan ni se convierten fechas con NLS.
-- Primera lectura y validación de tipos antes del DROP; un error inicial deja la tabla previa intacta.
-- Cada 10 segundos aproximadamente se registran filas confirmadas, lectura, inserción, velocidad y RAM.
-- Conteo destino final comparado con las filas confirmadas. Cero filas es una carga válida y genera tabla vacía.
-- Mutex global para evitar solapamiento entre procesos de este mismo equipo y usuario.
-  No protege contra ejecuciones desde otras computadoras; usar un solo equipo ejecutor.
+Las consultas se editan en sus archivos `.sql` y se incorporan al compilar. No se leen archivos externos en producción, por lo que no hace falta copiar `Queries` junto al EXE.
 
-El lote limita cantidad de filas y estima memoria; valores CLOB muy grandes pueden elevar su consumo.
-No se fuerza paralelismo, hints, NOLOGGING ni índices en las bases.
+## Procesos y fechas
 
-## Consulta
+Se conserva el comportamiento del código anterior a esta reorganización. Las fechas se calculan una vez al iniciar, usando la fecha local de Windows.
 
-La consulta está embebida al compilar, en `src/DBBridge/Sql/RnipActivos.sql`.
-`docs/RNIP_ACTIVOS_original.sql` conserva el TXT recibido para comparación.
+| Opción / argumento | Datos consultados | Tabla destino |
+|---|---|---|
+| 1 / `RNIP` | Activos actuales de la consulta original; el nombre mensual identifica el mes anterior, sin reconstrucción histórica ni filtro anual. | `CSNISPRNIP.Z_PYLOAD_RNIP_yyyyMM` |
+| 2 / `RND` | Consulta completa de RNDetenciones con sus filtros y NOLOCK originales. | `RND.dbo.tablero_rnd_yyyyMMdd` |
+| 3 / `RND_FA` | Consulta completa de RNDetenciones_FA con aislamiento normal del origen. | `RND.dbo.tablero_rnd_yyyyMMdd_fa` |
+| 4 / `RMJ` | Histórico hasta el último día del mes anterior, incluyendo fechas de registro nulas. | `CSNISPMANDAMIENTOS.Z_PYLOAD_RMJJ_yyyyMM` |
+| 5 / `RNIP_D` | Consulta RNIP con FECHA_REGISTRO hasta el día de ejecución, incluyendo nulos. | `CSNISPRNIP.Z_PYLOAD_RNIP_yyyyMMdd_D` |
+| 6 / `RMJ_D` | Histórico hasta el día de ejecución, incluyendo fechas de registro nulas. | `CSNISPMANDAMIENTOS.Z_PYLOAD_RMJJ_yyyyMMdd_D` |
+| 7 / `LIC` | Actualizaciones desde el 1 de enero hasta el último día del mes anterior; excluye fechas nulas. | `CSNISPLICENCIA.Z_PYLOAD_LC_yyyyMM` |
+| 8 / `LIC_D` | Actualizaciones desde el 1 de enero hasta ayer; excluye fechas nulas. | `CSNISPLICENCIA.Z_PYLOAD_LC_yyyyMMdd_D` |
 
-Los joins usados únicamente para indicadores de existencia se sustituyeron por EXISTS,
-para evitar multiplicar filas por fotografías, marcas, voz y demás indicadores.
-CICATRICES ahora consulta V_EXISTE_CICATRIZ. El filtro activo se aplica en el INNER JOIN
-con IDENCOMP; conserva el efecto del filtro original. Se mantiene DISTINCT y los joins
-que generan delitos, domicilios, alias y otras filas legítimas.
-No se supone que EXPEDIENTE sea único. Antes de aceptar la primera carga, comparar
-conteo y resultados con la consulta original corrigiendo también CICATRICES a VEC.
-La rapidez de EXISTS depende de los planes e índices reales: ver `docs/PRUEBAS.md`.
+LIC usa `LI.FECHA_ACTUALIZA`. Sus rangos incluyen todo el último día mediante un límite superior exclusivo a medianoche. El inicio anual pertenece al año de la última fecha incluida: al ejecutar el 1 de enero, el corte hasta el 31 de diciembre abarca el año anterior. La tabla diaria mantiene la fecha de ejecución en el nombre.
 
-El sufijo mensual identifica el periodo de carga. Se consultan los activos actuales;
-no se reconstruye el estado histórico al último día del mes anterior.
+## Carga y retención
 
-## Errores y ejecución posterior
+Oracle comparte un único motor con metadatos y primera lectura antes de recrear la tabla. Conserva fetch de 32 MiB, lotes automáticos de hasta 5000 filas, valores Oracle tipados y commit por lote. Si falla después de iniciar la recreación, puede quedar una carga parcial; el log indica la etapa y se debe reejecutar.
 
-Oracle confirma DDL automáticamente: el DROP y CREATE no se pueden deshacer con rollback.
-Los lotes anteriores permanecen confirmados si falla uno posterior; el lote que falla se revierte.
-Una ejecución fallida no debe consumirse como carga completa. Reejecutar reconstruye todo.
-Si se pierde la conexión durante un commit, su resultado puede ser incierto; igualmente reejecutar.
-Ctrl+C solicita cancelación; una inserción activa puede terminar o esperar el timeout (600 segundos).
-La consulta no tiene timeout fijo; se cancela con Ctrl+C. No hay pausas ni ReadKey.
+SQL Server conserva el motor de carga 1.7: un lector, copia síncrona en ventanas de 50000 filas, lotes de 10000 y una transacción para preparación, carga y limpieza. La validación final compara COUNT_BIG antes del commit. RND y RND_FA deben programarse de forma secuencial por los bloqueos que pueden compartir en el destino.
 
-Códigos: 0 éxito con conteo validado; 1 error; 2 ejecución simultánea; 3 cancelación.
+Cada serie diaria conserva al menos 31 tablas. Después de validar una carga, elimina **una** tabla, la más antigua, únicamente si hay más de 31 válidas. El conteo Oracle reconoce los sufijos antiguos `D` y actuales `_D`. No mezcla series ni tablas mensuales; excluye nombres inválidos y fechas futuras. Las tablas mensuales de otros periodos se conservan. Reejecutar un mismo periodo recrea o recarga su tabla.
 
-Publicación futura para tarea programada:
+Cero filas es una carga válida, igual que antes. Oracle confirma DROP/CREATE automáticamente; sus lotes anteriores no se revierten como una transacción completa.
+
+## Logs y ejecución programada
+
+Los logs son diarios y acumulativos, en `logs` junto al EXE: `RNIP_yyyyMMdd.log`, `LIC_D_yyyyMMdd.log`, etc. El archivo cambia al pasar de día. Los estados aparecen cada 15 segundos y las cargas reportan conteos, tiempos y memoria. La reorganización no introduce borrado automático de logs.
+
+El mutex evita repetir simultáneamente el mismo proceso en este equipo. Los nombres de los argumentos y los BATs mantienen las tareas existentes.
 
 ```powershell
-dotnet publish src/DBBridge/DBBridge.csproj -c Release -r win-x64 --self-contained true -o publish
+cd "D:\CNI\DBBridge"
+$destinoDBBridge = Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'DBBridge'
+dotnet publish ".\src\DBBridge\DBBridge.csproj" -c Release -r win-x64 --self-contained true -o "$destinoDBBridge"
+Copy-Item ".\bats\*.bat" "$destinoDBBridge" -Force
 ```
 
-Ejecutar `publish/DBBridge.exe` directamente. Desactivar el inicio de una segunda instancia
-en el Programador de tareas y mantener disponible la red con la cuenta ejecutora.
-Primero validar manualmente; este paquete no crea ninguna tarea programada.
+Cada BAT llama al EXE desde su propia carpeta, pasa el nombre del proceso y devuelve su código. No pausa ni solicita opciones. La periodicidad se configura en el Programador de tareas de Windows.
 
-## Extensión
+Códigos: 0 éxito; 1 error; 2 ejecución duplicada; 3 cancelación; 64 argumento inválido. Ctrl+C solicita cancelación.
 
-`ITransferProcess` separa cada carga del arranque y los logs. El proveedor Oracle y la
-escritura por lotes están separados del proceso RNIP. Solo RNIP está implementado.
-LIC, RMJ, RNPSP, VRYR y SQL Server se incorporarán como procesos nuevos con sus consultas
-reales; SQL Server requerirá su proveedor y SqlBulkCopy. No se agregan procesos ficticios.
+## Validación de la reorganización
+
+Código compilado con referencias .NET 8 y advertencias tratadas como errores. Se compararon las cinco consultas ejecutadas con el código del repo base `73bd3816049e4a44dfb2f85688302a467621c26f`, sin diferencias salvo espacios de formato. Se verificaron los recursos embebidos del proyecto, nombres del menú/CLI, cortes de mes/año, parámetros de las seis variantes Oracle y retención independiente de todas las series. Las operaciones del motor RND, los tipos, escritores, conexiones y logs se conservaron.
+
+Las pruebas locales no se conectaron a las bases. Hace falta probar las cargas desde el equipo con acceso a los servidores y volver a publicar el EXE antes de usar esta versión en las tareas.

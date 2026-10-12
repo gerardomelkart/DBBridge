@@ -1,4 +1,4 @@
-﻿using System.Data.Common;
+using System.Data.Common;
 
 namespace DBBridge.SqlServer;
 
@@ -28,7 +28,9 @@ internal static class RndSchema
     public static (string Sql, List<string> Columns) Create(string target, string template, IReadOnlyList<string> columns, IReadOnlyList<DbColumn> source)
     {
         if (!IsLegacy(columns) || source.Count != 60)
+        {
             throw new InvalidOperationException("La adaptación requiere la estructura RND conocida de 54 columnas y una consulta de 60.");
+        }
         var expressions = new List<string>();
         var names = new List<string>();
 
@@ -42,16 +44,27 @@ internal static class RndSchema
         {
             DbColumn column = source[index];
             if (!string.Equals(column.ColumnName, name, StringComparison.OrdinalIgnoreCase))
+            {
                 throw new InvalidOperationException($"Columna origen inesperada en posición {index + 1}: {column.ColumnName}; se esperaba {name}.");
+            }
             names.Add(name);
             expressions.Add($"CAST(NULL AS {StringType(column)}) AS {Quote(name)}");
         }
 
-        for (int i = 0; i < 9; i++) Previous(i);
+        for (int i = 0; i < 9; i++)
+
+        {
+
+            Previous(i);
+
+        }
         Added(9, "NOMBRE_MP");
         Added(10, "APELLIDO_PATERNO_MP");
         Added(11, "APELLIDO_MATERNO_MP");
-        for (int i = 9; i < columns.Count; i++) Previous(i);
+        for (int i = 9; i < columns.Count; i++)
+        {
+            Previous(i);
+        }
         Added(57, "ENTIDAD_RESIDENCIA");
         Added(58, "ENTIDAD_NACIMIENTO");
         Added(59, "MUNICIPIO_NACIMIENTO");
@@ -63,19 +76,25 @@ internal static class RndSchema
     {
         string type = (column.DataTypeName ?? "").ToLowerInvariant();
         if (type is not ("varchar" or "nvarchar" or "char" or "nchar"))
+        {
             throw new InvalidOperationException($"Tipo no admitido para {column.ColumnName}: {column.DataTypeName}.");
+        }
         int size = column.ColumnSize ?? throw new InvalidOperationException($"No se recibió longitud de {column.ColumnName}.");
         int limit = type is "nvarchar" or "nchar" ? 4000 : 8000;
         if (size == -1 || size > limit)
         {
             if (type is "char" or "nchar")
+            {
                 throw new InvalidOperationException($"Longitud no admitida de {column.ColumnName}: {size}.");
+            }
             return type + "(max)";
         }
-        if (size < 1) throw new InvalidOperationException($"Longitud no admitida de {column.ColumnName}: {size}.");
+        if (size < 1)
+        {
+            throw new InvalidOperationException($"Longitud no admitida de {column.ColumnName}: {size}.");
+        }
         return $"{type}({size})";
     }
 
     private static string Quote(string name) => "[" + name.Replace("]", "]]", StringComparison.Ordinal) + "]";
 }
-

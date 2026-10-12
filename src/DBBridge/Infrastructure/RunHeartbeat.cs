@@ -1,4 +1,4 @@
-﻿namespace DBBridge.Infrastructure;
+namespace DBBridge.Infrastructure;
 
 internal sealed class RunHeartbeat : IDisposable
 {
@@ -30,14 +30,20 @@ internal sealed class RunHeartbeat : IDisposable
 
     public void SetReadCounter(Func<long> value)
     {
-        lock (gate) readCounter = value;
+        lock (gate)
+        {
+            readCounter = value;
+        }
     }
 
     private void Tick(object? state)
     {
         lock (gate)
         {
-            if (disposed) return;
+            if (disposed)
+            {
+                return;
+            }
             double elapsed = (Environment.TickCount64 - phaseStarted) / 1000.0;
             try
             {
@@ -54,7 +60,10 @@ internal sealed class RunHeartbeat : IDisposable
 
     public void Dispose()
     {
-        lock (gate) disposed = true;
+        lock (gate)
+        {
+            disposed = true;
+        }
         timer.Dispose();
     }
 }

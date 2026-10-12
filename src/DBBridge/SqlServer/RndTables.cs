@@ -14,9 +14,15 @@ internal static class RndTables
     {
         string suffix = fa ? "_fa" : "";
         if (name.Length != Prefix.Length + 8 + suffix.Length || !name.StartsWith(Prefix, StringComparison.Ordinal)
-            || !name.EndsWith(suffix, StringComparison.Ordinal)) return null;
+            || !name.EndsWith(suffix, StringComparison.Ordinal))
+        {
+            return null;
+        }
         string date = name.Substring(Prefix.Length, 8);
-        if (date.Any(c => c < '0' || c > '9')) return null;
+        if (date.Any(c => c < '0' || c > '9'))
+        {
+            return null;
+        }
         return DateTime.TryParseExact(date, "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed)
             ? parsed : null;
     }

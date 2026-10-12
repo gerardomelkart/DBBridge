@@ -42,7 +42,10 @@ internal sealed class ArrayBatchWriter : IDisposable
 
     public void Add(OracleDataReader reader)
     {
-        if (Count == Capacity) throw new InvalidOperationException("Lote lleno.");
+        if (Count == Capacity)
+        {
+            throw new InvalidOperationException("Lote lleno.");
+        }
         foreach (var column in columns)
         {
             int ordinal = column.Ordinal;
@@ -56,7 +59,10 @@ internal sealed class ArrayBatchWriter : IDisposable
             else
             {
                 // Los tipos Oracle usan el status NullInsert; texto limpia referencias previas.
-                if (values[ordinal] is string[] strings) strings[Count] = null!;
+                if (values[ordinal] is string[] strings)
+                {
+                    strings[Count] = null!;
+                }
                 sizes[ordinal][Count] = 1;
             }
         }
@@ -65,7 +71,10 @@ internal sealed class ArrayBatchWriter : IDisposable
 
     public int Flush()
     {
-        if (Count == 0) return 0;
+        if (Count == 0)
+        {
+            return 0;
+        }
         command.ArrayBindCount = Count;
         foreach (var column in columns)
         {
@@ -90,7 +99,10 @@ internal sealed class ArrayBatchWriter : IDisposable
         }
         int written = Count;
         Count = 0;
-        foreach (var array in values) Array.Clear(array);
+        foreach (var array in values)
+        {
+            Array.Clear(array);
+        }
         return written;
     }
 

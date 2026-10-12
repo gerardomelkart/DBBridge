@@ -27,22 +27,34 @@ internal sealed class CountingReader : DbDataReader
 
     public void StartBatch(int rowLimit)
     {
-        if (rowLimit <= 0) throw new ArgumentOutOfRangeException(nameof(rowLimit));
+        if (rowLimit <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(rowLimit));
+        }
         batchEnd = checked(Rows + rowLimit);
     }
 
     private bool Record(bool result, long started)
     {
         Interlocked.Add(ref readTicks, Stopwatch.GetTimestamp() - started);
-        if (!result) Exhausted = true;
-        if (result && Interlocked.Increment(ref rows) == 1) firstRow();
+        if (!result)
+        {
+            Exhausted = true;
+        }
+        if (result && Interlocked.Increment(ref rows) == 1)
+        {
+            firstRow();
+        }
         return result;
     }
 
     public override bool Read()
     {
         cancellation.ThrowIfCancellationRequested();
-        if (Rows >= batchEnd || Exhausted) return false;
+        if (Rows >= batchEnd || Exhausted)
+        {
+            return false;
+        }
         long started = Stopwatch.GetTimestamp();
         return Record(reader.Read(), started);
     }
@@ -51,7 +63,10 @@ internal sealed class CountingReader : DbDataReader
     {
         cancellation.ThrowIfCancellationRequested();
         cancellationToken.ThrowIfCancellationRequested();
-        if (Rows >= batchEnd || Exhausted) return false;
+        if (Rows >= batchEnd || Exhausted)
+        {
+            return false;
+        }
         long started = Stopwatch.GetTimestamp();
         return Record(await reader.ReadAsync(cancellationToken).ConfigureAwait(false), started);
     }
@@ -101,7 +116,10 @@ internal sealed class CountingReader : DbDataReader
     public override void Close() => reader.Close();
     protected override void Dispose(bool disposing)
     {
-        if (disposing) reader.Dispose();
+        if (disposing)
+        {
+            reader.Dispose();
+        }
         base.Dispose(disposing);
     }
 }

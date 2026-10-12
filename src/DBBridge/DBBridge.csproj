@@ -9,6 +9,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.SqlClient" Version="6.1.7" />
     <PackageReference Include="Oracle.ManagedDataAccess.Core" Version="23.26.301" />
-    <EmbeddedResource Include="Sql/RnipActivos.sql" />
+    <EmbeddedResource Include="Queries/Oracle/*.sql" LogicalName="DBBridge.Queries.Oracle.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="Queries/SqlServer/*.sql" LogicalName="DBBridge.Queries.SqlServer.%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>

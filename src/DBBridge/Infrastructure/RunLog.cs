@@ -31,7 +31,10 @@ internal sealed class RunLog : IDisposable
     {
         lock (gate)
         {
-            if (disposed) return;
+            if (disposed)
+            {
+                return;
+            }
             DateTimeOffset now = clock();
             string path = Path.Combine(directory, $"{processName}_{now:yyyyMMdd}.log");
             if (path != currentPath)

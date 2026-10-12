@@ -17,7 +17,9 @@ internal sealed record ColumnDefinition(int Ordinal, string Name, OracleDbType B
             int ordinal = Convert.ToInt32(row["ColumnOrdinal"]);
             string name = reader.GetName(ordinal).ToUpperInvariant();
             if (!Regex.IsMatch(name, @"^[A-Z][A-Z0-9_]{0,29}$"))
+            {
                 throw new InvalidOperationException($"Columna inválida: {name}");
+            }
             int size = row["ColumnSize"] == DBNull.Value
                 ? 0 : Convert.ToInt32(row["ColumnSize"]);
             var type = (OracleDbType)Convert.ToInt32(row["ProviderType"]);
@@ -39,7 +41,9 @@ internal sealed record ColumnDefinition(int Ordinal, string Name, OracleDbType B
             columns.Add(new ColumnDefinition(ordinal, name, bind, sql, size));
         }
         if (columns.Count == 0 || columns.Select(c => c.Name).Distinct().Count() != columns.Count)
+        {
             throw new InvalidOperationException("Columnas vacías o repetidas.");
+        }
         return columns.OrderBy(c => c.Ordinal).ToArray();
     }
 
@@ -47,7 +51,10 @@ internal sealed record ColumnDefinition(int Ordinal, string Name, OracleDbType B
     {
         // Hasta cuatro bytes por carácter. Evita truncar texto si cambia el charset.
         // Expresiones amplias se conservan en CLOB, sin límite arbitrario de 4000.
-        if (size <= 0 || size > 1000) return (OracleDbType.Clob, "CLOB");
+        if (size <= 0 || size > 1000)
+        {
+            return (OracleDbType.Clob, "CLOB");
+        }
         return (OracleDbType.Varchar2, $"VARCHAR2({size * 4} BYTE)");
     }
 

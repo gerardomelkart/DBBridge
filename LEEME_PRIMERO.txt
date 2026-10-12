@@ -1,0 +1,19 @@
+Para actualizar desde Git: git pull, compilar, probar y volver a publicar el EXE.
+
+DBBridge 1.16 - código reorganizado
+
+1. Cierra Visual Studio y espera a que terminen las cargas activas.
+2. Respalda src\DBBridge fuera del repositorio, incluidos tus logs de pruebas.
+3. Sustituye completa la carpeta src\DBBridge por la del ZIP.
+4. Conserva tu DBBridge.sln. Copia README.md a la raíz del repo.
+5. El DBBridge.csproj del ZIP SÍ debe copiarse: incorpora las consultas SQL.
+6. Abre la solución, restaura NuGet, compila y prueba desde Visual Studio.
+7. Publica de nuevo el EXE y copia los ocho BATs de bats junto al EXE.
+
+Las consultas están en Queries\Oracle y Queries\SqlServer.
+Se incorporan al compilar: no necesitas llevar esos SQL al escritorio.
+Los nombres de procesos y las tareas existentes siguen funcionando.
+Se conservan las reglas actuales de fechas, tipos, lotes, commits y retención.
+Esta reorganización también está disponible en Git. No modifica las bases de datos al copiar o compilar el código.
+
+Lee README.md para la estructura, reglas de cada proceso y publicación.
