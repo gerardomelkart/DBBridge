@@ -55,4 +55,4 @@ LEFT JOIN dbo.[cat_nacionalidades_fa] x ON b.id_nacionalidad = x.id_nacionalidad
 LEFT JOIN dbo.[cat_estados_fa] y ON d.id_entidad = y.id_entidad
 LEFT JOIN dbo.[cat_estados_fa] z ON d.id_estado = z.id_entidad
 LEFT JOIN dbo.[municipios_equivalentes_fa] za
-    ON d.id_municipio = za.id_municipio_georeferencia AND d.id_estado = za.id_entidad_georeferencia;
+    ON d.id_municipio = za.id_municipio_georeferencia AND d.id_entidad = za.id_entidad_georeferencia;
