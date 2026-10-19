@@ -132,6 +132,10 @@ internal sealed class RndTransfer
                 throw;
             }
 
+            // Los nombres históricos del destino forman parte del contrato con los scripts consumidores.
+            // FA conserva su propia plantilla; no se le impone el contrato de nombres de RND.
+            var renames = fa ? new List<(string Before, string After)>() : RndSchema.RestoreRndNames(columns);
+
             // Los SP insertaban sin lista de columnas: el mapeo conserva ese mismo orden.
             for (int i = 0; i < columns.Count; i++)
             {
@@ -163,6 +167,16 @@ internal sealed class RndTransfer
                 Phase($"Creando {qualified} desde {RndTables.Qualified(previous!)}; pendiente de commit");
                 await Execute(destination, transaction,
                     createSql, cancellation).ConfigureAwait(false);
+            }
+            foreach (var rename in renames)
+            {
+                Phase($"Restaurando nombre de columna RND: {rename.Before} -> {rename.After}; pendiente de commit");
+                using var renameCommand = Command(destination, transaction,
+                    "EXEC sys.sp_rename @objname=@column, @newname=@name, @objtype=N'COLUMN';");
+                renameCommand.Parameters.Add("@column", SqlDbType.NVarChar, 776).Value =
+                    qualified + ".[" + rename.Before.Replace("]", "]]", StringComparison.Ordinal) + "]";
+                renameCommand.Parameters.Add("@name", SqlDbType.NVarChar, 128).Value = rename.After;
+                await renameCommand.ExecuteNonQueryAsync(cancellation).ConfigureAwait(false);
             }
             log.Write($"Preparación del destino={preparation.Elapsed.TotalSeconds:F1}s.");
 
@@ -271,6 +285,10 @@ internal sealed class RndTransfer
             await transaction.CommitAsync(CancellationToken.None).ConfigureAwait(false);
             committed = true;
             heartbeat.Confirmed(copied);
+            foreach (var rename in renames)
+            {
+                log.Write($"NOMBRE DE COLUMNA RESTAURADO: {qualified}; {rename.Before} -> {rename.After}; confirmado.");
+            }
             log.Write(exists ? $"TABLA VACIADA Y RECARGADA: {qualified}."
                 : $"TABLA CREADA: {qualified}; estructura copiada de {RndTables.Qualified(previous!)}.");
             if (legacy)

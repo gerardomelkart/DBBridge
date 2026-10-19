@@ -72,6 +72,43 @@ internal static class RndSchema
         return (sql, names);
     }
 
+
+    public static List<(string Before, string After)> RestoreRndNames(List<string> columns)
+    {
+        var expected = new (int Position, string Historical, string Alias)[]
+        {
+            (6, "NOMBRE", "NOMBRE_PR"),
+            (7, "APELLIDO_PATERNO", "APELLIDO_PATERNO_PR"),
+            (8, "APELLIDO_MATERNO", "APELLIDO_MATERNO_PR"),
+            (20, "ENTIDAD", "ENTIDAD_DETENCION"),
+            (21, "MUNICIPIO", "MUNICIPIO_DETENCION")
+        };
+        var renames = new List<(string Before, string After)>();
+        foreach (var item in expected)
+        {
+            string actual = columns[item.Position];
+            if (string.Equals(actual, item.Historical, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+            if (!string.Equals(actual, item.Alias, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException($"Columna RND incompatible en posición {item.Position + 1}: {actual}; se esperaba {item.Historical} o {item.Alias}. Destino sin modificar.");
+            }
+            if (columns.Any(name => string.Equals(name, item.Historical, StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new InvalidOperationException($"No se puede restaurar {actual}: ya existe {item.Historical}. Destino sin modificar.");
+            }
+            renames.Add((actual, item.Historical));
+        }
+        foreach (var rename in renames)
+        {
+            int index = columns.FindIndex(name => string.Equals(name, rename.Before, StringComparison.OrdinalIgnoreCase));
+            columns[index] = rename.After;
+        }
+        return renames;
+    }
+
     private static string StringType(DbColumn column)
     {
         string type = (column.DataTypeName ?? "").ToLowerInvariant();
